@@ -1,5 +1,7 @@
 # 复制小工具
 
+##如果本工具有帮助到您的话，请帮忙给个start谢谢！
+
 > 本工具作用于两种情况：
 > 1、源文件夹下YYMMDD子文件夹内文件移动到目标文件夹 
 > 2、源文件夹下所有文件定时到目标文件夹
@@ -28,11 +30,11 @@ type =
 
 ### win
 
-前往 Releases 下载压缩包，按要求完成 copy.ini 文件的配置，双击压缩包下的exe文件即可
+前往 [Releases](https://github.com/gongjuecloak/copy_tools/releases/) 下载win压缩包，按要求完成 copy.ini 文件的配置，双击压缩包下的exe文件即可
 
 ### linux
 
-下载 Releases 源码压缩包，按要求完成 copy.ini 文件的配置，运行 copy_tools.py 即可
+前往 [Releases](https://github.com/gongjuecloak/copy_tools/releases/) 下载linux压缩包，按要求完成 copy.ini 文件的配置，运行 copy_tools.py 即可
 
 ## 注意事项
 

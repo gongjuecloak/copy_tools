@@ -34,63 +34,61 @@ class Logger(object):
         th.setFormatter(format_str)
         self.logger.addHandler(sh) 
         self.logger.addHandler(th)
-
+		
 def read_config_file(config_file_path):
 	config = configparser.ConfigParser()
 	config.read_file(open(config_file_path))
 	variables = {}
-	for section in config.sections():
-		for option in config[section]:
-			variables[option] = config[section][option]
+	for Basis in config.Basiss():
+		for option in config[Basis]:
+			variables[option] = config[Basis][option]
 	return variables
 
 def copy_file():
 	now = time.time()
 	current_date = time.strftime("%y%m%d", time.localtime(now))
-	variables = read_config_file("copy.ini")
+	config = configparser.ConfigParser()
+	config.read_file(open("copy.ini"))
 	log_dir_path = "log.txt"
 	
 	log = Logger(log_dir_path,level='debug')
 	
-	log.logger.info(time_printer())
-	
-	error_log = Logger('error.log', level='error')
-	
-	if variables["type"] == "1":
-			src_dir = variables["src_dir"] + '/' + current_date
-	elif variables["type"] == "2":
-			src_dir = variables["src_dir"] + '/'
-	elif variables["type"] != "1" or variables["type"] != "3":
+	if config["Basis"]["type"] == "1":
+			src_dir = config["Basis"]["src_dir"] + '/' + current_date
+	elif config["Basis"]["type"] == "2":
+			src_dir = config["Basis"]["src_dir"] + '/'
+	elif config["Basis"]["type"] != "1" or config["Basis"]["type"] != "3":
 			error_log.logger.error("类型填写错误，请检查配置")
 			exit(1)
-	dst_dir = variables["dst_dir"]
+	dst_dir = config["Basis"]["dst_dir"]
 	if not os.path.isdir(src_dir):
-		error_log.logger.error("源文件路径不存在，请检查配置")
+		log.logger.error("源文件路径不存在，请检查配置")
 		exit(1)
 	elif not os.path.isdir(dst_dir):
-		error_log.logger.error("目标路径不存在，请检查配置")
+		log.logger.error("目标路径不存在，请检查配置")
 		exit(1)
+	elif os.path.getsize(src_dir):
+		var1 = config["Basis"]["rest_time"]
+		log.logger.info("源文件路径文件夹为空，休息" + var1 + "秒后继续")
+		time.sleep(float(var1))
 	for file_name in os.listdir(src_dir):
 			src_file = os.path.join(src_dir, file_name)
 			dst_file = os.path.join(dst_dir, file_name)
 			shutil.move(src_file, dst_file)
 			log.logger.info("移动文件：" + src_file + " --> " + dst_file)
-	
-def time_printer():
-	now = datetime.datetime.now()
-	ts = now.strftime('%Y-%m-%d %H:%M:%S')
-	return "执行时间:" + ts
-	
+		
 def loop_monitor():
+	config = configparser.ConfigParser()
+	config.read_file(open("copy.ini"))
 	while True:
 			copy_file()
-			time.sleep(5)
+			time.sleep(float(config["Basis"]["execution_time"]))
 
 def tools_version():
-	t_version = "1.0.0"
+	t_version = "1.1.0"
 	print("欢迎使用Cloak的复制工具\n")
 	print("当前版本:" + t_version + "\n")
-			
+
 if __name__ == "__main__":
 	tools_version()
 	loop_monitor()

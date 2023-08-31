@@ -69,7 +69,7 @@ def copy_file():
 		exit(1)
 	elif os.path.getsize(src_dir):
 		var1 = config["Basis"]["rest_time"]
-		log.logger.info("源文件路径文件夹为空，休息" + var1 + "秒后继续")
+		print("源文件路径文件夹为空，休息" + var1 + "秒后继续")
 		time.sleep(float(var1))
 	for file_name in os.listdir(src_dir):
 			src_file = os.path.join(src_dir, file_name)

@@ -1,4 +1,4 @@
-name: Build and Release EXE (3 Files Only)
+name: Build and Release EXE (ZIP Package)
 
 on:
   workflow_dispatch:
@@ -27,55 +27,50 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install pyinstaller watchdog
-          # 打印依赖安装结果
-          pip show pyinstaller
 
-      # 关键：打包后强制打印dist目录内容，确认EXE存在
+      # 打包EXE并验证
       - name: Build EXE and verify
         run: |
-          # 执行打包（强制输出详细日志）
           pyinstaller --onefile --name "FileMoveTool" --clean copy_tools.py
-          # 打印当前目录所有文件，定位EXE位置
-          Write-Host "=== 当前目录结构 ==="
-          Get-ChildItem -Recurse
-          # 强制检查EXE是否存在，不存在直接失败
+          # 验证EXE存在
           if (-not (Test-Path "dist\FileMoveTool.exe")) {
-            Write-Error "❌ 打包失败！dist目录下无EXE文件"
+            Write-Error "❌ EXE打包失败！"
             exit 1
           }
-          Write-Host "✅ EXE文件已生成：$(Get-Item dist\FileMoveTool.exe)"
+          Write-Host "✅ EXE文件已生成"
 
-      # 关键：显式复制所有文件到统一目录，避免路径问题
-      - name: Prepare release files
+      # 关键：将EXE和配置文件打包为ZIP
+      - name: Package into ZIP file
         run: |
-          # 创建临时目录，集中存放要上传的文件
-          New-Item -ItemType Directory -Path "release_files" -Force
-          # 复制EXE（绝对路径确保能找到）
-          Copy-Item -Path "$(Get-Location)\dist\FileMoveTool.exe" -Destination "release_files\" -Force
-          # 复制配置文件和说明文档（仓库已有）
-          Copy-Item -Path "copy.ini" -Destination "release_files\" -Force
-          Copy-Item -Path "README.md" -Destination "release_files\" -Force
-          # 打印要上传的文件列表，确认3个文件都在
-          Write-Host "=== 待上传到Release的文件 ==="
-          Get-ChildItem "release_files\"
+          # 创建临时目录存放待打包文件
+          New-Item -ItemType Directory -Path "package_temp" -Force
+          # 复制核心文件到临时目录
+          Copy-Item -Path "dist\FileMoveTool.exe" -Destination "package_temp\" -Force
+          Copy-Item -Path "copy.ini" -Destination "package_temp\" -Force
+          # 生成ZIP包（命名规则：工具名-版本号.zip）
+          $version = "${{ github.ref_name }}"
+          $zipName = "FileMoveTool-$version.zip"
+          Compress-Archive -Path "package_temp\*" -DestinationPath $zipName -Force
+          # 验证ZIP包内容
+          Write-Host "=== ZIP包内文件列表 ==="
+          Get-ChildItem -Path $zipName
+          # 查看ZIP包内的具体文件
+          $zipContent = (Get-ChildItem -Path "package_temp\").Name
+          Write-Host "✅ ZIP包包含：$zipContent"
 
-      # 最终上传：直接指定临时目录下的3个文件
-      - name: Upload to GitHub Releases
+      # 上传ZIP包到Release（仅上传ZIP，无零散文件）
+      - name: Upload ZIP to GitHub Releases
         uses: softprops/action-gh-release@v2
         with:
-          # 明确指定3个文件的路径（从临时目录读取，100%能找到）
+          # 仅上传ZIP包
           files: |
-            release_files/FileMoveTool.exe
-            release_files/copy.ini
-            release_files/README.md
+            FileMoveTool-${{ github.ref_name }}.zip
           name: ${{ github.ref_name }}
           body: |
             ## 文件移动工具 ${{ github.ref_name }}
-            ### 包含文件（直接可用）
-            1. FileMoveTool.exe - 主程序
-            2. copy.ini - 配置文件（需修改实际目录）
-            3. README.md - 使用说明
-          draft: false
-          prerelease: false
+            ### 📦 下载说明
+            1. 下载 `FileMoveTool-${{ github.ref_name }}.zip` 压缩包
+            2. 解压后得到 `FileMoveTool.exe` + `copy.ini`
+            3. 修改 `copy.ini` 配置后，双击EXE运行
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

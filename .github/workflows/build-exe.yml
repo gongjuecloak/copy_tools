@@ -1,4 +1,4 @@
-name: Build and Release EXE (Full Package)
+name: Build and Release EXE (With All Dependencies)
 
 on:
   workflow_dispatch:
@@ -6,8 +6,6 @@ on:
     tags:
       - '[0-9]+.[0-9]+.*'  # 无v前缀版本号（如2.2.0）
       - 'v*'               # 兼容v前缀版本号（如v2.2.0）
-    branches:
-      - main
 
 permissions:
   contents: write
@@ -16,134 +14,66 @@ jobs:
   build-windows-exe:
     runs-on: windows-latest
     steps:
+      # 1. 拉取仓库代码（包含已有的copy.ini、README.md）
       - name: Checkout code
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
 
+      # 2. 配置Python环境
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.13'
 
-      # 步骤1：安装依赖
+      # 3. 安装打包依赖
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install pyinstaller watchdog
-          pip list
 
-      # 步骤2：验证必需文件存在（关键！配置文件缺失直接终止）
-      - name: Check required files
-        run: |
-          # 检查主程序
-          if (-not (Test-Path "copy_tools.py")) {
-            Write-Error "❌ 主程序文件 copy_tools.py 不存在！"
-            exit 1
-          }
-          # 检查配置文件模板（缺失则终止，确保Release有配置文件）
-          if (-not (Test-Path "copy.ini")) {
-            Write-Error "❌ 配置文件模板 copy.ini 不存在！请先添加到仓库根目录"
-            exit 1
-          }
-          # 可选：检查说明文档，不存在则创建简易版
-          if (-not (Test-Path "README.md")) {
-            Write-Warning "⚠️ 说明文档 README.md 不存在，自动创建简易版"
-            # 修复：使用PowerShell兼容的多行字符串写法
-            $readmeContent = @"
-# 文件移动工具使用说明
-## 快速开始
-1. 修改 copy.ini 配置文件，填写源目录、目标目录等参数
-2. 双击 FileMoveTool.exe 运行工具
-3. 运行日志会保存在当前目录的 file_move_tool.log 中
-
-## 配置项说明
-- src_dir: 源监控目录（绝对路径，如D:\download）
-- dst_dir: 目标目录（绝对路径，如E:\archive）
-- type: 1=按日期子目录监控，2=直接监控源目录
-- rest_time: 空目录时休息时间（秒）
-- execution_time: 执行间隔（秒）
-- file_extensions: 过滤文件扩展名（逗号分隔，如mp4,txt，留空则不过滤）
-- file_prefixes: 过滤文件前缀（逗号分隔，如order_,log_，留空则不过滤）
-"@
-            $readmeContent | Out-File -FilePath "README.md" -Encoding utf8
-          }
-          # 列出所有文件，确认依赖齐全
-          Get-ChildItem -Recurse
-
-      # 步骤3：打包EXE
+      # 4. 打包EXE（仅打包，不生成其他文件）
       - name: Build EXE with PyInstaller
         run: |
-          pyinstaller --onefile `
-            --name "FileMoveTool" `
-            --clean `
-            --log-level=DEBUG `
-            copy_tools.py
+          pyinstaller --onefile --name "FileMoveTool" --clean copy_tools.py
 
-      # 步骤4：准备完整发布包（所有必需文件）
-      - name: Prepare full release package
+      # 5. 验证文件存在性（确保仓库已有copy.ini、README.md）
+      - name: Verify required files
         run: |
-          # 创建发布包目录
-          New-Item -ItemType Directory -Path "FileMoveTool-Package" -Force
-          # 复制核心文件
-          Copy-Item dist\FileMoveTool.exe "FileMoveTool-Package\"
-          Copy-Item copy.ini "FileMoveTool-Package\"
-          Copy-Item README.md "FileMoveTool-Package\"
-          # 生成版本信息
-          $version = "${{ github.ref_name }}"
-          if ("${{ github.ref_type }}" -eq "branch") {
-            $version = "dev-${{ github.sha.Substring(0,7) }}"
+          # 检查打包后的EXE
+          if (-not (Test-Path "dist\FileMoveTool.exe")) {
+            Write-Error "EXE打包失败！"
+            exit 1
           }
-          $versionInfo = "版本号：$version`n构建时间：$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')`n运行说明：修改copy.ini后双击EXE运行"
-          $versionInfo | Out-File -FilePath "FileMoveTool-Package\版本信息.txt" -Encoding utf8
-          # 压缩为ZIP包（方便下载，避免文件散落）
-          Compress-Archive -Path "FileMoveTool-Package\*" -DestinationPath "FileMoveTool-$version.zip" -Force
-          # 验证压缩包
-          Write-Host "✅ 发布包包含以下文件："
-          Get-ChildItem "FileMoveTool-Package\"
-          Get-ChildItem "FileMoveTool-$version.zip"
+          # 检查仓库中的copy.ini（缺失则终止）
+          if (-not (Test-Path "copy.ini")) {
+            Write-Error "仓库中缺少copy.ini配置文件！"
+            exit 1
+          }
+          # 检查仓库中的README.md（缺失则终止）
+          if (-not (Test-Path "README.md")) {
+            Write-Error "仓库中缺少README.md说明文档！"
+            exit 1
+          }
+          Write-Host "✅ 所有必需文件均存在"
 
-      # 步骤5：分支构建 → 上传Artifact（测试用）
-      - name: Upload Artifact (branch build)
-        if: github.ref_type == 'branch'
-        uses: actions/upload-artifact@v4
-        with:
-          name: FileMoveTool-Dev-Package
-          path: |
-            FileMoveTool-*.zip
-            FileMoveTool-Package/
-          retention-days: 7
-
-      # 步骤6：Tag构建 → 发布到Releases（正式版，含完整包）
-      - name: Upload to GitHub Releases (tag build)
-        if: github.ref_type == 'tag'
+      # 6. 发布到GitHub Releases（仅上传3个核心文件）
+      - name: Upload to GitHub Releases
         uses: softprops/action-gh-release@v2
         with:
-          # 上传ZIP包（主文件）+ 解压后的文件夹（备用）
+          # 明确指定要上传的3个文件（仓库已有+打包生成）
           files: |
-            FileMoveTool-*.zip
-            FileMoveTool-Package/
-          name: 版本 ${{ github.ref_name }}
+            dist/FileMoveTool.exe  # 打包生成的EXE
+            copy.ini               # 仓库中已有的配置文件
+            README.md              # 仓库中已有的说明文档
+          name: ${{ github.ref_name }}
           body: |
-            ## 文件移动工具 版本 ${{ github.ref_name }}
-            ### 📦 包含文件
-            - FileMoveTool.exe（主程序）
-            - copy.ini（配置文件模板，需修改后使用）
-            - README.md（使用说明）
-            - 版本信息.txt（版本和构建信息）
+            ## 文件移动工具 ${{ github.ref_name }}
+            ### 📦 包含文件（直接可用）
+            1. FileMoveTool.exe - 主程序
+            2. copy.ini - 配置文件（需修改为你的实际目录）
+            3. README.md - 使用说明
             ### 🚀 快速使用
-            1. 下载并解压 ZIP 包
-            2. 修改 copy.ini 中的目录和规则配置
-            3. 双击 FileMoveTool.exe 运行
-            ### ⚙️ 配置项说明
-            - src_dir: 源监控目录（绝对路径，如D:\download）
-            - dst_dir: 目标目录（绝对路径，如E:\archive）
-            - type: 1=按日期子目录监控，2=直接监控源目录
-            - rest_time: 空目录休息时间（秒）
-            - execution_time: 执行间隔（秒）
-            - file_extensions: 过滤扩展名（逗号分隔，如mp4,txt）
-            - file_prefixes: 过滤前缀（逗号分隔，如order_,log_）
-          draft: false
-          prerelease: false
+            1. 下载Release中的3个文件，放在同一目录
+            2. 修改copy.ini中的src_dir、dst_dir等配置
+            3. 双击FileMoveTool.exe运行
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

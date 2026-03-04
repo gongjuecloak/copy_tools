@@ -1,1 +1,12 @@
-﻿
+﻿2026-03-04 09:47:28 - d:\ruanjian\go-work\copy_tools\copy_tools.py[line:280] - INFO: 尝试读取配置文件: d:\ruanjian\go-work\copy_tools\copy.ini
+2026-03-04 09:47:28 - d:\ruanjian\go-work\copy_tools\copy_tools.py[line:132] - INFO: 配置参数校验通过
+2026-03-04 09:47:28 - d:\ruanjian\go-work\copy_tools\copy_tools.py[line:250] - INFO: 开始循环监控，执行间隔: 60.0 秒
+2026-03-04 09:47:28 - d:\ruanjian\go-work\copy_tools\copy_tools.py[line:182] - INFO: 成功移动文件: D:\user\download\copy_tools-main\copy_tools-main\1\index (11).html --> D:\user\download\copy_tools-main\copy_tools-main\2\index (11).html
+2026-03-04 09:47:28 - d:\ruanjian\go-work\copy_tools\copy_tools.py[line:182] - INFO: 成功移动文件: D:\user\download\copy_tools-main\copy_tools-main\1\index (12).html --> D:\user\download\copy_tools-main\copy_tools-main\2\index (12).html
+2026-03-04 09:47:28 - d:\ruanjian\go-work\copy_tools\copy_tools.py[line:182] - INFO: 成功移动文件: D:\user\download\copy_tools-main\copy_tools-main\1\index (13).html --> D:\user\download\copy_tools-main\copy_tools-main\2\index (13).html
+2026-03-04 09:47:28 - d:\ruanjian\go-work\copy_tools\copy_tools.py[line:182] - INFO: 成功移动文件: D:\user\download\copy_tools-main\copy_tools-main\1\index (14).html --> D:\user\download\copy_tools-main\copy_tools-main\2\index (14).html
+2026-03-04 09:47:28 - d:\ruanjian\go-work\copy_tools\copy_tools.py[line:182] - INFO: 成功移动文件: D:\user\download\copy_tools-main\copy_tools-main\1\index (15).html --> D:\user\download\copy_tools-main\copy_tools-main\2\index (15).html
+2026-03-04 09:47:28 - d:\ruanjian\go-work\copy_tools\copy_tools.py[line:182] - INFO: 成功移动文件: D:\user\download\copy_tools-main\copy_tools-main\1\index (16).html --> D:\user\download\copy_tools-main\copy_tools-main\2\index (16).html
+2026-03-04 09:47:28 - d:\ruanjian\go-work\copy_tools\copy_tools.py[line:182] - INFO: 成功移动文件: D:\user\download\copy_tools-main\copy_tools-main\1\index (17).html --> D:\user\download\copy_tools-main\copy_tools-main\2\index (17).html
+2026-03-04 09:47:28 - d:\ruanjian\go-work\copy_tools\copy_tools.py[line:254] - INFO: 等待 60.0 秒后执行下一次检查
+2026-03-04 09:47:56 - d:\ruanjian\go-work\copy_tools\copy_tools.py[line:298] - INFO: 用户手动终止程序

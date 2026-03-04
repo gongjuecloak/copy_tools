@@ -1,12 +1,13 @@
-name: Build and Release EXE
+name: Build and Release EXE (Full Package)
 
 on:
   workflow_dispatch:
   push:
     tags:
-      - '[0-9]+.[0-9]+.*'  # 匹配纯数字版本号（如2.2.0、1.0、3.0.1-beta）
-      - 'v*'               # 兼容v开头的版本号（如v2.2.0）
-      - 'V*'
+      - '[0-9]+.[0-9]+.*'  # 无v前缀版本号（如2.2.0）
+      - 'v*'               # 兼容v前缀版本号（如v2.2.0）
+    branches:
+      - main
 
 permissions:
   contents: write
@@ -25,89 +26,121 @@ jobs:
         with:
           python-version: '3.13'
 
-      # 步骤1：安装依赖并输出详细日志
+      # 步骤1：安装依赖
       - name: Install dependencies
         run: |
-          python --version
-          pip --version
           python -m pip install --upgrade pip
           pip install pyinstaller watchdog
-          # 输出已安装的包，排查依赖问题
           pip list
 
-      # 步骤2：验证代码文件存在性（关键）
-      - name: Check project files
+      # 步骤2：验证必需文件存在（关键！配置文件缺失直接终止）
+      - name: Check required files
         run: |
-          # 列出当前目录所有文件，确认主程序存在
-          Get-ChildItem -Recurse
-          # 检查主程序文件是否存在
+          # 检查主程序
           if (-not (Test-Path "copy_tools.py")) {
-            Write-Error "主程序文件 copy_tools.py 不存在！"
+            Write-Error "❌ 主程序文件 copy_tools.py 不存在！"
             exit 1
           }
-          # 检查配置文件（可选）
+          # 检查配置文件模板（缺失则终止，确保Release有配置文件）
           if (-not (Test-Path "copy.ini")) {
-            Write-Warning "配置文件 copy.ini 不存在，将跳过上传"
+            Write-Error "❌ 配置文件模板 copy.ini 不存在！请先添加到仓库根目录"
+            exit 1
           }
+          # 可选：检查说明文档
+          if (-not (Test-Path "README.md")) {
+            Write-Warning "⚠️ 说明文档 README.md 不存在，建议添加"
+            # 创建简易说明文档
+            @"
+# 文件移动工具使用说明
+## 快速开始
+1. 修改 copy.ini 配置文件，填写源目录、目标目录等参数
+2. 双击 FileMoveTool.exe 运行工具
+3. 运行日志会保存在当前目录的 file_move_tool.log 中
 
-      # 步骤3：打包EXE（移除无效的--encoding参数，修复核心错误）
+## 配置项说明
+- src_dir: 源监控目录
+- dst_dir: 目标目录
+- type: 1=按日期子目录监控，2=直接监控源目录
+- rest_time: 空目录时休息时间（秒）
+- execution_time: 执行间隔（秒）
+- file_extensions: 过滤文件扩展名（逗号分隔，如mp4,txt）
+- file_prefixes: 过滤文件前缀（逗号分隔，如order_,log_）
+"@ | Out-File -FilePath "README.md" -Encoding utf8
+          }
+          # 列出所有文件，确认依赖齐全
+          Get-ChildItem -Recurse
+
+      # 步骤3：打包EXE
       - name: Build EXE with PyInstaller
         run: |
-          # 正确的PyInstaller命令（移除--encoding参数）
           pyinstaller --onefile `
             --name "FileMoveTool" `
             --clean `
             --log-level=DEBUG `
             copy_tools.py
-        continue-on-error: false  # 打包失败直接终止流程
 
-      # 步骤4：验证打包结果（兼容PowerShell语法）
-      - name: Verify build result
+      # 步骤4：准备完整发布包（所有必需文件）
+      - name: Prepare full release package
         run: |
-          # PowerShell正确的路径检查语法
-          if (Test-Path "dist\FileMoveTool.exe") {
-            Write-Host "打包成功！EXE文件信息："
-            Get-ChildItem dist\FileMoveTool.exe | Format-List
-          } else {
-            Write-Error "打包失败！dist目录内容："
-            if (Test-Path "dist") {
-              Get-ChildItem -Path dist -Recurse
-            } else {
-              Write-Error "dist目录不存在！"
-            }
-            exit 1
-          }
-
-      # 步骤5：准备发布文件（处理配置文件不存在的情况）
-      - name: Prepare release files
-        run: |
-          # 创建临时发布目录
-          New-Item -ItemType Directory -Path release -Force
-          # 复制EXE文件
-          Copy-Item dist\FileMoveTool.exe release\
-          # 复制配置文件（存在则复制）
-          if (Test-Path "copy.ini") {
-            Copy-Item copy.ini release\
-          }
+          # 创建发布包目录
+          New-Item -ItemType Directory -Path "FileMoveTool-Package" -Force
+          # 复制核心文件
+          Copy-Item dist\FileMoveTool.exe "FileMoveTool-Package\"
+          Copy-Item copy.ini "FileMoveTool-Package\"
+          Copy-Item README.md "FileMoveTool-Package\"
           # 生成版本信息
-          echo "FileMoveTool v${{ github.ref_name || 'latest' }}" > release\version.txt
-          # 列出发布文件
-          Get-ChildItem release\
+          $version = "${{ github.ref_name }}"
+          if ("${{ github.ref_type }}" -eq "branch") {
+            $version = "dev-${{ github.sha.Substring(0,7) }}"
+          }
+          "版本号：$version`n构建时间：$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')`n运行说明：修改copy.ini后双击EXE运行" | Out-File -FilePath "FileMoveTool-Package\版本信息.txt" -Encoding utf8
+          # 压缩为ZIP包（方便下载，避免文件散落）
+          Compress-Archive -Path "FileMoveTool-Package\*" -DestinationPath "FileMoveTool-$version.zip" -Force
+          # 验证压缩包
+          Write-Host "✅ 发布包包含以下文件："
+          Get-ChildItem "FileMoveTool-Package\"
+          Get-ChildItem "FileMoveTool-$version.zip"
 
-      # 步骤6：上传到Release
-      - name: Upload to GitHub Releases
+      # 步骤5：分支构建 → 上传Artifact（测试用）
+      - name: Upload Artifact (branch build)
+        if: github.ref_type == 'branch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: FileMoveTool-Dev-Package
+          path: |
+            FileMoveTool-*.zip
+            FileMoveTool-Package/
+          retention-days: 7
+
+      # 步骤6：Tag构建 → 发布到Releases（正式版，含完整包）
+      - name: Upload to GitHub Releases (tag build)
+        if: github.ref_type == 'tag'
         uses: softprops/action-gh-release@v2
         with:
+          # 上传ZIP包（主文件）+ 解压后的文件夹（备用）
           files: |
-            release/FileMoveTool.exe
-            release/copy.ini*  # *表示存在则上传
-            release/version.txt
-          name: ${{ github.ref_name || 'Latest Build' }}
+            FileMoveTool-*.zip
+            FileMoveTool-Package/
+          name: 版本 ${{ github.ref_name }}
           body: |
-            ## 文件移动工具 ${{ github.ref_name || '最新构建' }}
-            - 构建环境：Windows Server 2022 + Python 3.13
-            - 打包工具：PyInstaller
-            - 无需安装Python，直接运行EXE
+            ## 文件移动工具 版本 ${{ github.ref_name }}
+            ### 📦 包含文件
+            - FileMoveTool.exe（主程序）
+            - copy.ini（配置文件模板，需修改后使用）
+            - README.md（使用说明）
+            - 版本信息.txt（版本和构建信息）
+            ### 🚀 快速使用
+            1. 下载并解压 ZIP 包
+            2. 修改 copy.ini 中的目录和规则配置
+            3. 双击 FileMoveTool.exe 运行
+            ### ⚙️ 配置项说明
+            - src_dir: 源监控目录
+            - dst_dir: 目标目录
+            - type: 1=按日期子目录监控，2=直接监控源目录
+            - rest_time: 空目录休息时间（秒）
+            - execution_time: 执行间隔（秒）
+            - file_extensions: 过滤扩展名（逗号分隔，如mp4,txt）
+            - file_prefixes: 过滤前缀（逗号分隔，如order_,log_）
           draft: false
           prerelease: false
         env:

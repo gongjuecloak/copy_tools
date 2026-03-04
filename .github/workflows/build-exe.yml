@@ -48,14 +48,13 @@ jobs:
             Write-Warning "配置文件 copy.ini 不存在，将跳过上传"
           }
 
-      # 步骤3：打包EXE（增加错误捕获和详细日志）
+      # 步骤3：打包EXE（移除无效的--encoding参数，修复核心错误）
       - name: Build EXE with PyInstaller
         run: |
-          # 使用PowerShell兼容的打包命令，输出详细日志
+          # 正确的PyInstaller命令（移除--encoding参数）
           pyinstaller --onefile `
             --name "FileMoveTool" `
             --clean `
-            --encoding utf-8 `
             --log-level=DEBUG `
             copy_tools.py
         continue-on-error: false  # 打包失败直接终止流程
@@ -69,7 +68,11 @@ jobs:
             Get-ChildItem dist\FileMoveTool.exe | Format-List
           } else {
             Write-Error "打包失败！dist目录内容："
-            Get-ChildItem -Path . -Recurse | Where-Object {$_.DirectoryName -match "dist"}
+            if (Test-Path "dist") {
+              Get-ChildItem -Path dist -Recurse
+            } else {
+              Write-Error "dist目录不存在！"
+            }
             exit 1
           }
 

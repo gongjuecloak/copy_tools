@@ -1,79 +1,81 @@
-name: Build and Release EXE (With All Dependencies)
+name: Build and Release EXE (3 Files Only)
 
 on:
   workflow_dispatch:
   push:
     tags:
-      - '[0-9]+.[0-9]+.*'  # 无v前缀版本号（如2.2.0）
-      - 'v*'               # 兼容v前缀版本号（如v2.2.0）
+      - '[0-9]+.[0-9]+.*'
+      - 'v*'
 
 permissions:
   contents: write
+  actions: read
 
 jobs:
   build-windows-exe:
     runs-on: windows-latest
     steps:
-      # 1. 拉取仓库代码（包含已有的copy.ini、README.md）
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # 2. 配置Python环境
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.13'
 
-      # 3. 安装打包依赖
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install pyinstaller watchdog
+          # 打印依赖安装结果
+          pip show pyinstaller
 
-      # 4. 打包EXE（仅打包，不生成其他文件）
-      - name: Build EXE with PyInstaller
+      # 关键：打包后强制打印dist目录内容，确认EXE存在
+      - name: Build EXE and verify
         run: |
+          # 执行打包（强制输出详细日志）
           pyinstaller --onefile --name "FileMoveTool" --clean copy_tools.py
-
-      # 5. 验证文件存在性（确保仓库已有copy.ini、README.md）
-      - name: Verify required files
-        run: |
-          # 检查打包后的EXE
+          # 打印当前目录所有文件，定位EXE位置
+          Write-Host "=== 当前目录结构 ==="
+          Get-ChildItem -Recurse
+          # 强制检查EXE是否存在，不存在直接失败
           if (-not (Test-Path "dist\FileMoveTool.exe")) {
-            Write-Error "EXE打包失败！"
+            Write-Error "❌ 打包失败！dist目录下无EXE文件"
             exit 1
           }
-          # 检查仓库中的copy.ini（缺失则终止）
-          if (-not (Test-Path "copy.ini")) {
-            Write-Error "仓库中缺少copy.ini配置文件！"
-            exit 1
-          }
-          # 检查仓库中的README.md（缺失则终止）
-          if (-not (Test-Path "README.md")) {
-            Write-Error "仓库中缺少README.md说明文档！"
-            exit 1
-          }
-          Write-Host "✅ 所有必需文件均存在"
+          Write-Host "✅ EXE文件已生成：$(Get-Item dist\FileMoveTool.exe)"
 
-      # 6. 发布到GitHub Releases（仅上传3个核心文件）
+      # 关键：显式复制所有文件到统一目录，避免路径问题
+      - name: Prepare release files
+        run: |
+          # 创建临时目录，集中存放要上传的文件
+          New-Item -ItemType Directory -Path "release_files" -Force
+          # 复制EXE（绝对路径确保能找到）
+          Copy-Item -Path "$(Get-Location)\dist\FileMoveTool.exe" -Destination "release_files\" -Force
+          # 复制配置文件和说明文档（仓库已有）
+          Copy-Item -Path "copy.ini" -Destination "release_files\" -Force
+          Copy-Item -Path "README.md" -Destination "release_files\" -Force
+          # 打印要上传的文件列表，确认3个文件都在
+          Write-Host "=== 待上传到Release的文件 ==="
+          Get-ChildItem "release_files\"
+
+      # 最终上传：直接指定临时目录下的3个文件
       - name: Upload to GitHub Releases
         uses: softprops/action-gh-release@v2
         with:
-          # 明确指定要上传的3个文件（仓库已有+打包生成）
+          # 明确指定3个文件的路径（从临时目录读取，100%能找到）
           files: |
-            dist/FileMoveTool.exe  # 打包生成的EXE
-            copy.ini               # 仓库中已有的配置文件
-            README.md              # 仓库中已有的说明文档
+            release_files/FileMoveTool.exe
+            release_files/copy.ini
+            release_files/README.md
           name: ${{ github.ref_name }}
           body: |
             ## 文件移动工具 ${{ github.ref_name }}
-            ### 📦 包含文件（直接可用）
+            ### 包含文件（直接可用）
             1. FileMoveTool.exe - 主程序
-            2. copy.ini - 配置文件（需修改为你的实际目录）
+            2. copy.ini - 配置文件（需修改实际目录）
             3. README.md - 使用说明
-            ### 🚀 快速使用
-            1. 下载Release中的3个文件，放在同一目录
-            2. 修改copy.ini中的src_dir、dst_dir等配置
-            3. 双击FileMoveTool.exe运行
+          draft: false
+          prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

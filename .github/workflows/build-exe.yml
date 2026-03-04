@@ -1,75 +1,108 @@
 name: Build and Release EXE
 
-# 触发条件：1. 手动触发 2. 创建Tag时自动触发
 on:
-  workflow_dispatch:  # 手动触发
+  workflow_dispatch:
   push:
     tags:
-      - 'v*'  # 以v开头的Tag（如v2.2.0）触发
+      - 'v*'
 
-# 工作流权限配置
 permissions:
-  contents: write  # 允许写入Release内容
+  contents: write
 
 jobs:
   build-windows-exe:
-    runs-on: windows-latest  # 使用Windows环境打包EXE
-    
+    runs-on: windows-latest
     steps:
-      # 步骤1：拉取代码到工作环境（关键：确保检出完整代码）
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          fetch-depth: 1  # 拉取完整代码（避免浅克隆导致文件找不到）
-      
-      # 步骤2：配置Python环境（移除自动缓存，避免找不到依赖文件报错）
+          fetch-depth: 1
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.13'  # 匹配你的Python版本
-          # 注释掉cache选项，避免自动查找requirements.txt报错
-          # cache: 'pip'
-      
-      # 步骤3：手动创建requirements.txt（解决缓存依赖，可选）
-      - name: Create requirements.txt
-        run: |
-          # 手动写入项目依赖（和你的程序匹配）
-          echo "watchdog>=3.0.0" > requirements.txt
-          echo "pyinstaller>=6.0.0" >> requirements.txt
-          # 查看生成的文件（调试用）
-          type requirements.txt
-      
-      # 步骤4：安装依赖（包括打包工具和程序依赖）
+          python-version: '3.13'
+
+      # 步骤1：安装依赖并输出详细日志
       - name: Install dependencies
         run: |
+          python --version
+          pip --version
           python -m pip install --upgrade pip
-          # 从手动创建的requirements.txt安装依赖
-          pip install -r requirements.txt
-      
-      # 步骤5：使用PyInstaller打包EXE（解决中文路径/编码问题）
+          pip install pyinstaller watchdog
+          # 输出已安装的包，排查依赖问题
+          pip list
+
+      # 步骤2：验证代码文件存在性（关键）
+      - name: Check project files
+        run: |
+          # 列出当前目录所有文件，确认主程序存在
+          Get-ChildItem -Recurse
+          # 检查主程序文件是否存在
+          if (-not (Test-Path "copy_tools.py")) {
+            Write-Error "主程序文件 copy_tools.py 不存在！"
+            exit 1
+          }
+          # 检查配置文件（可选）
+          if (-not (Test-Path "copy.ini")) {
+            Write-Warning "配置文件 copy.ini 不存在，将跳过上传"
+          }
+
+      # 步骤3：打包EXE（增加错误捕获和详细日志）
       - name: Build EXE with PyInstaller
         run: |
-          # 打包命令：单文件 + 指定名称 + UTF8编码 + 清理缓存
-          pyinstaller --onefile --name "FileMoveTool" --clean --encoding utf-8 copy_tools.py
-          # 查看打包结果
-          dir dist\
-      
-      # 步骤6：创建/更新Release并上传EXE文件
+          # 使用PowerShell兼容的打包命令，输出详细日志
+          pyinstaller --onefile `
+            --name "FileMoveTool" `
+            --clean `
+            --encoding utf-8 `
+            --log-level=DEBUG `
+            copy_tools.py
+        continue-on-error: false  # 打包失败直接终止流程
+
+      # 步骤4：验证打包结果（兼容PowerShell语法）
+      - name: Verify build result
+        run: |
+          # PowerShell正确的路径检查语法
+          if (Test-Path "dist\FileMoveTool.exe") {
+            Write-Host "打包成功！EXE文件信息："
+            Get-ChildItem dist\FileMoveTool.exe | Format-List
+          } else {
+            Write-Error "打包失败！dist目录内容："
+            Get-ChildItem -Path . -Recurse | Where-Object {$_.DirectoryName -match "dist"}
+            exit 1
+          }
+
+      # 步骤5：准备发布文件（处理配置文件不存在的情况）
+      - name: Prepare release files
+        run: |
+          # 创建临时发布目录
+          New-Item -ItemType Directory -Path release -Force
+          # 复制EXE文件
+          Copy-Item dist\FileMoveTool.exe release\
+          # 复制配置文件（存在则复制）
+          if (Test-Path "copy.ini") {
+            Copy-Item copy.ini release\
+          }
+          # 生成版本信息
+          echo "FileMoveTool v${{ github.ref_name || 'latest' }}" > release\version.txt
+          # 列出发布文件
+          Get-ChildItem release\
+
+      # 步骤6：上传到Release
       - name: Upload to GitHub Releases
         uses: softprops/action-gh-release@v2
         with:
-          # 上传打包后的EXE和配置文件模板
           files: |
-            dist/FileMoveTool.exe
-            copy.ini  # 确保你的仓库中有这个配置模板文件
-            requirements.txt
-          # Release信息配置
+            release/FileMoveTool.exe
+            release/copy.ini*  # *表示存在则上传
+            release/version.txt
           name: ${{ github.ref_name || 'Latest Build' }}
           body: |
             ## 文件移动工具 ${{ github.ref_name || '最新构建' }}
-            - 基于Python 3.13 + PyInstaller自动打包
-            - 支持Windows直接运行（无需安装Python）
-            - 包含配置文件模板（copy.ini）
+            - 构建环境：Windows Server 2022 + Python 3.13
+            - 打包工具：PyInstaller
+            - 无需安装Python，直接运行EXE
           draft: false
           prerelease: false
         env:

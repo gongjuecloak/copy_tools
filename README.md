@@ -1,64 +1,47 @@
-# 文件自动移动工具
-定时自动将文件从源目录移动到目标目录，支持 GUI 界面与命令行双模式。
+# 自动文件移动工具
 
-## 如果本工具有帮助到您的话，请帮忙给个start谢谢！
+一款基于 PyQt5 开发的 Windows 桌面工具，支持自动监控指定目录，按规则将文件移动到目标位置，支持日期子目录、文件过滤、配置持久化等功能。
 
-> 本工具作用于两种情况：
-> 1、源文件夹下YYMMDD子文件夹内文件移动到目标文件夹 
-> 2、源文件夹下所有文件定时到目标文件夹
+## 📋 功能特点
+- ✅ 可视化配置界面，无需编写代码
+- ✅ 两种监控模式：按日期子目录/直接监控源目录
+- ✅ 支持文件后缀/前缀过滤，精准移动指定文件
+- ✅ 实时日志查看，运行状态一目了然
+- ✅ 配置自动保存，重启后无需重新设置
+- ✅ 自动处理重复文件（重命名避免覆盖）
+- ✅ 空目录自动休眠，降低资源占用
 
-## 功能特性
-1. 支持两种监控模式：
-- 按日期子目录（YYYYMMDD）监控并移动文件
-- 直接监控源目录并移动文件
-2. 支持按文件扩展名、文件前缀过滤
-3. 运行中配置文件热加载
-4. 文件移动失败自动重试
-5. 同名文件自动时间戳重命名
-6. 完整日志输出 + 移动统计
-7. 带 PyQt5 图形界面，无 GUI 时自动运行命令行模式
+## 📥 下载使用
+### 方式1：直接下载EXE（推荐）
+1. 进入仓库 [Releases](https://github.com/gongjuecloak/copy_tools/releases) 页面
+2. 下载最新版本的 `自动文件移动工具.exe`
+3. 无需安装，双击即可运行
 
-## 文件说明
-```
-copy_tools.py      # 主程序
-copy.ini           # 配置文件
-file_move_tool.log # 运行日志（自动生成）
-README.md          # 说明文档
-```
+### 方式2：源码运行
+#### 环境要求
+- Python 3.8+
+- 依赖包：PyQt5、watchdog
 
-## 配置说明
+#### 运行步骤
+```bash
+# 克隆仓库
+git clone https://github.com/gongjuecloak/copy_tools.git
+cd copy_tools
 
-```
-[config]
-# 源目录
-src_dir = 
-# 目标目录
-dst_dir = 
-# 监控类型：1=按日期子目录 2=直接监控源目录
-type = 2
-# 目录为空时休息时间（秒）
-rest_time = 10.0
-# 执行间隔（秒）
-execution_time = 10.0
-# 后缀过滤，逗号分隔，空=不过滤
-file_extensions = .html
-# 前缀过滤，逗号分隔，空=不过滤
-file_prefixes =
+# 安装依赖
+pip install pyqt5 watchdog
+
+# 运行程序
+python copy_tools.py
 ```
 
-## 使用
+### 方式 3：自行打包 EXE
+```bash
+# 安装打包工具
+pip install pyinstaller
 
-### win
+# 打包为单文件EXE
+pyinstaller --onefile --name "自动文件移动工具" --clean copy_tools.py
 
-前往 [Releases](https://github.com/gongjuecloak/copy_tools/releases/) 下载win压缩包，按要求完成 copy.ini 文件的配置，双击压缩包下的exe文件即可
-
-### linux
-
-前往 [Releases](https://github.com/gongjuecloak/copy_tools/releases/) 下载linux压缩包，按要求完成 copy.ini 文件的配置，运行 copy_tools.py 即可
-
-## 注意事项
-
-路径末尾不要加斜杠
-确保源目录、目标目录有读写权限
-Linux 下如缺少库请自行安装依赖
-关闭窗口时会自动停止监控线程
+# 生成的EXE在 dist 目录下
+```

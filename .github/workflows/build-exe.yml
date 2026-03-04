@@ -1,61 +1,85 @@
-name: Build and Release EXE (Direct EXE Upload)
+name: 构建并发布EXE（直接上传EXE文件）
 
 on:
-  workflow_dispatch:
+  workflow_dispatch:  # 手动触发（兼容无tag场景）
   push:
     tags:
-      - '[0-9]+.[0-9]+.*'
-      - 'v*'
+      - '[0-9]+.[0-9]+.*'  # 匹配 1.0、2.1.3 等版本标签
+      - 'v*'               # 匹配 v1.0、v2.1 等版本标签
 
 permissions:
-  contents: write
+  contents: write  # 必须：允许创建/编辑Release
   actions: read
 
 jobs:
-  build-windows-exe:
+  构建Windows可执行文件:
     runs-on: windows-latest
     steps:
-      - name: Checkout code
+      - name: 拉取代码
         uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: 配置Python环境
         uses: actions/setup-python@v5
         with:
           python-version: '3.13'
+          # 强制使用最新pip，避免依赖安装问题
+          cache: 'pip'
 
-      - name: Install dependencies
+      - name: 安装依赖包
         run: |
-          python -m pip install --upgrade pip
+          python -m pip install --upgrade pip setuptools wheel
           pip install pyinstaller watchdog PyQt5
+          # 打印已安装包，排查依赖问题
+          pip list
 
-      # 打包EXE并验证（工具名改为自动相关）
-      - name: Build EXE and verify
+      # 关键：打包前先打印目录，打包后验证文件（增加调试信息）
+      - name: 打包EXE文件并验证
         run: |
-          # 打包为单文件EXE，名称改为「自动文件移动工具」（中文名称兼容）
-          pyinstaller --onefile --name "自动文件移动工具" --clean copy_tools.py
-          # 验证EXE存在
-          if (-not (Test-Path "dist\自动文件移动工具.exe")) {
-            Write-Error "❌ EXE打包失败！"
+          # 打印当前目录结构（调试用）
+          Write-Host "=== 当前目录文件列表 ==="
+          Get-ChildItem -Recurse
+          
+          # 打包EXE（指定编码，避免中文名称乱码）
+          pyinstaller --onefile --name "自动文件移动工具" --clean --encoding utf-8 copy_tools.py
+          
+          # 打印dist目录（确认EXE是否生成）
+          Write-Host "=== dist目录文件列表 ==="
+          Get-ChildItem -Path "dist" -Recurse
+          
+          # 验证EXE存在（兼容大小写/路径分隔符）
+          $exePath = Join-Path -Path "dist" -ChildPath "自动文件移动工具.exe"
+          if (-not (Test-Path $exePath -PathType Leaf)) {
+            Write-Error "❌ EXE打包失败！未找到文件：$exePath"
             exit 1
           }
-          Write-Host "✅ EXE文件已生成：dist\自动文件移动工具.exe"
+          Write-Host "✅ EXE文件生成成功：$exePath"
+          # 打印文件大小（确认文件完整）
+          $fileInfo = Get-Item $exePath
+          Write-Host "📄 EXE文件大小：$($fileInfo.Length) 字节"
 
-      # 直接上传EXE到GitHub Releases（无需ZIP）
-      - name: Upload EXE to GitHub Releases
+      # 核心修复：上传EXE（兼容手动触发/Tag触发，指定明确路径）
+      - name: 上传EXE文件到GitHub Releases
         uses: softprops/action-gh-release@v2
+        if: github.event_name != 'pull_request'  # 避免PR触发
         with:
-          # 直接上传EXE文件
+          # 明确指定文件路径（使用绝对路径+兼容Windows）
           files: |
-            dist\自动文件移动工具.exe
-          name: ${{ github.ref_name }}
+            ${{ github.workspace }}\dist\自动文件移动工具.exe
+          # 兼容手动触发时的Release名称
+          name: ${{ github.ref_name || 'v1.0.0' }}
+          # 强制创建Release（即使已存在同名Tag）
+          draft: false
+          prerelease: false
           body: |
-            ## 自动文件移动工具 ${{ github.ref_name }}
-            ### 📦 下载说明
-            1. 下载 `自动文件移动工具.exe`
-            2. 准备好 `copy.ini` 配置文件（与EXE同目录）
-            3. 修改 `copy.ini` 配置后，双击EXE运行
-            ### ⚠️ 注意
-            - EXE需与配置文件放在同一目录
-            - 首次运行请先配置源目录/目标目录等参数
+            ## 自动文件移动工具 ${{ github.ref_name || 'v1.0.0' }}
+            ### 📦 下载使用说明
+            1. 下载 `自动文件移动工具.exe` 文件
+            2. 准备 `copy.ini` 配置文件（与EXE同目录）
+            3. 修改配置后双击EXE运行
+            ### ⚠️ 注意事项
+            - EXE需与copy.ini放在同一目录
+            - 首次运行请先配置源目录/目标目录
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # 强制UTF-8编码，避免中文乱码
+          PYTHONIOENCODING: utf-8

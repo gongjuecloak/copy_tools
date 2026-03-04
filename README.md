@@ -45,3 +45,9 @@ pyinstaller --onefile --name "自动文件移动工具" --clean copy_tools.py
 
 # 生成的EXE在 dist 目录下
 ```
+
+## 截图
+![配置](image.png)
+![监控](image-1.png)
+![日志](image-2.png)
+![帮助中心](image-3.png)

@@ -1,4 +1,4 @@
-name: Build and Release EXE (ZIP Package)
+name: Build and Release EXE (Direct EXE Upload)
 
 on:
   workflow_dispatch:
@@ -28,49 +28,34 @@ jobs:
           python -m pip install --upgrade pip
           pip install pyinstaller watchdog PyQt5
 
-      # 打包EXE并验证
+      # 打包EXE并验证（工具名改为自动相关）
       - name: Build EXE and verify
         run: |
-          pyinstaller --onefile --name "FileMoveTool" --clean copy_tools.py
+          # 打包为单文件EXE，名称改为「自动文件移动工具」（中文名称兼容）
+          pyinstaller --onefile --name "自动文件移动工具" --clean copy_tools.py
           # 验证EXE存在
-          if (-not (Test-Path "dist\FileMoveTool.exe")) {
+          if (-not (Test-Path "dist\自动文件移动工具.exe")) {
             Write-Error "❌ EXE打包失败！"
             exit 1
           }
-          Write-Host "✅ EXE文件已生成"
+          Write-Host "✅ EXE文件已生成：dist\自动文件移动工具.exe"
 
-      # 关键：将EXE和配置文件打包为ZIP
-      - name: Package into ZIP file
-        run: |
-          # 创建临时目录存放待打包文件
-          New-Item -ItemType Directory -Path "package_temp" -Force
-          # 复制核心文件到临时目录
-          Copy-Item -Path "dist\FileMoveTool.exe" -Destination "package_temp\" -Force
-          Copy-Item -Path "copy.ini" -Destination "package_temp\" -Force
-          # 生成ZIP包（命名规则：工具名-版本号.zip）
-          $version = "${{ github.ref_name }}"
-          $zipName = "FileMoveTool-$version.zip"
-          Compress-Archive -Path "package_temp\*" -DestinationPath $zipName -Force
-          # 验证ZIP包内容
-          Write-Host "=== ZIP包内文件列表 ==="
-          Get-ChildItem -Path $zipName
-          # 查看ZIP包内的具体文件
-          $zipContent = (Get-ChildItem -Path "package_temp\").Name
-          Write-Host "✅ ZIP包包含：$zipContent"
-
-      # 上传ZIP包到Release（仅上传ZIP，无零散文件）
-      - name: Upload ZIP to GitHub Releases
+      # 直接上传EXE到GitHub Releases（无需ZIP）
+      - name: Upload EXE to GitHub Releases
         uses: softprops/action-gh-release@v2
         with:
-          # 仅上传ZIP包
+          # 直接上传EXE文件
           files: |
-            FileMoveTool-${{ github.ref_name }}.zip
+            dist\自动文件移动工具.exe
           name: ${{ github.ref_name }}
           body: |
-            ## 文件移动工具 ${{ github.ref_name }}
+            ## 自动文件移动工具 ${{ github.ref_name }}
             ### 📦 下载说明
-            1. 下载 `FileMoveTool-${{ github.ref_name }}.zip` 压缩包
-            2. 解压后得到 `FileMoveTool.exe` + `copy.ini`
+            1. 下载 `自动文件移动工具.exe`
+            2. 准备好 `copy.ini` 配置文件（与EXE同目录）
             3. 修改 `copy.ini` 配置后，双击EXE运行
+            ### ⚠️ 注意
+            - EXE需与配置文件放在同一目录
+            - 首次运行请先配置源目录/目标目录等参数
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

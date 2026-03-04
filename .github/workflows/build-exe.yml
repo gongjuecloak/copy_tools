@@ -12,7 +12,8 @@ permissions:
   actions: read
 
 jobs:
-  构建Windows可执行文件:
+  # 核心修复：Job ID改为英文（符合GitHub规范），步骤名称仍保留中文
+  build-windows-exe:
     runs-on: windows-latest
     steps:
       - name: 拉取代码
@@ -83,3 +84,17 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # 强制UTF-8编码，避免中文乱码
           PYTHONIOENCODING: utf-8
+
+  # 可选：增加Artifact上传（备用方案，确保文件可获取）
+  upload-artifact:
+    needs: build-windows-exe
+    runs-on: windows-latest
+    steps:
+      - name: 拉取代码
+        uses: actions/checkout@v4
+      
+      - name: 临时上传EXE作为Artifact（备用）
+        uses: actions/upload-artifact@v4
+        with:
+          name: 自动文件移动工具
+          path: ${{ github.workspace }}\dist\自动文件移动工具.exe

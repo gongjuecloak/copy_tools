@@ -46,11 +46,11 @@ jobs:
             Write-Error "❌ 配置文件模板 copy.ini 不存在！请先添加到仓库根目录"
             exit 1
           }
-          # 可选：检查说明文档
+          # 可选：检查说明文档，不存在则创建简易版
           if (-not (Test-Path "README.md")) {
-            Write-Warning "⚠️ 说明文档 README.md 不存在，建议添加"
-            # 创建简易说明文档
-            @"
+            Write-Warning "⚠️ 说明文档 README.md 不存在，自动创建简易版"
+            # 修复：使用PowerShell兼容的多行字符串写法
+            $readmeContent = @"
 # 文件移动工具使用说明
 ## 快速开始
 1. 修改 copy.ini 配置文件，填写源目录、目标目录等参数
@@ -58,14 +58,15 @@ jobs:
 3. 运行日志会保存在当前目录的 file_move_tool.log 中
 
 ## 配置项说明
-- src_dir: 源监控目录
-- dst_dir: 目标目录
+- src_dir: 源监控目录（绝对路径，如D:\download）
+- dst_dir: 目标目录（绝对路径，如E:\archive）
 - type: 1=按日期子目录监控，2=直接监控源目录
 - rest_time: 空目录时休息时间（秒）
 - execution_time: 执行间隔（秒）
-- file_extensions: 过滤文件扩展名（逗号分隔，如mp4,txt）
-- file_prefixes: 过滤文件前缀（逗号分隔，如order_,log_）
-"@ | Out-File -FilePath "README.md" -Encoding utf8
+- file_extensions: 过滤文件扩展名（逗号分隔，如mp4,txt，留空则不过滤）
+- file_prefixes: 过滤文件前缀（逗号分隔，如order_,log_，留空则不过滤）
+"@
+            $readmeContent | Out-File -FilePath "README.md" -Encoding utf8
           }
           # 列出所有文件，确认依赖齐全
           Get-ChildItem -Recurse
@@ -93,7 +94,8 @@ jobs:
           if ("${{ github.ref_type }}" -eq "branch") {
             $version = "dev-${{ github.sha.Substring(0,7) }}"
           }
-          "版本号：$version`n构建时间：$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')`n运行说明：修改copy.ini后双击EXE运行" | Out-File -FilePath "FileMoveTool-Package\版本信息.txt" -Encoding utf8
+          $versionInfo = "版本号：$version`n构建时间：$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')`n运行说明：修改copy.ini后双击EXE运行"
+          $versionInfo | Out-File -FilePath "FileMoveTool-Package\版本信息.txt" -Encoding utf8
           # 压缩为ZIP包（方便下载，避免文件散落）
           Compress-Archive -Path "FileMoveTool-Package\*" -DestinationPath "FileMoveTool-$version.zip" -Force
           # 验证压缩包
@@ -134,8 +136,8 @@ jobs:
             2. 修改 copy.ini 中的目录和规则配置
             3. 双击 FileMoveTool.exe 运行
             ### ⚙️ 配置项说明
-            - src_dir: 源监控目录
-            - dst_dir: 目标目录
+            - src_dir: 源监控目录（绝对路径，如D:\download）
+            - dst_dir: 目标目录（绝对路径，如E:\archive）
             - type: 1=按日期子目录监控，2=直接监控源目录
             - rest_time: 空目录休息时间（秒）
             - execution_time: 执行间隔（秒）

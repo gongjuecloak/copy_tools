@@ -4,7 +4,9 @@ on:
   workflow_dispatch:
   push:
     tags:
-      - 'v*'
+      - '[0-9]+.[0-9]+.*'  # 匹配纯数字版本号（如2.2.0、1.0、3.0.1-beta）
+      - 'v*'               # 兼容v开头的版本号（如v2.2.0）
+      - 'V*'
 
 permissions:
   contents: write

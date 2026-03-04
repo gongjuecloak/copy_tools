@@ -11,6 +11,21 @@ from logging import handlers
 from typing import Dict, Optional, List, Any
 from dataclasses import dataclass
 
+# ===================== GUI 相关导入 =====================
+try:
+    from PyQt5.QtWidgets import (
+        QApplication, QMainWindow, QWidget, QTabWidget, QVBoxLayout, QHBoxLayout,
+        QLabel, QLineEdit, QPushButton, QTextEdit, QComboBox, QSpinBox, QDoubleSpinBox,
+        QGroupBox, QGridLayout, QFileDialog, QMessageBox, QPlainTextEdit, QSplitter,
+        QCheckBox, QStatusBar
+    )
+    from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer, QDateTime, QMutex, QMutexLocker, QMetaObject, Q_ARG
+    from PyQt5.QtGui import QFont, QIcon, QTextCursor
+    QT_AVAILABLE = True
+except ImportError:
+    QT_AVAILABLE = False
+    print("警告：未安装PyQt5，将使用命令行模式运行")
+
 # ===================== 基础配置 =====================
 # 获取代码文件所在的绝对目录
 CODE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -19,7 +34,7 @@ DEFAULT_CONFIG_PATH = os.path.join(CODE_DIR, "copy.ini")
 # 默认日志文件路径
 LOG_FILE_PATH = os.path.join(CODE_DIR, "file_move_tool.log")
 # 工具版本
-TOOL_VERSION = "2.2.0 (优化版)"
+TOOL_VERSION = "2.2.0 (最终修复版)"
 
 # ===================== 数据类定义 =====================
 @dataclass
@@ -45,12 +60,26 @@ class AppConfig:
             file_extensions=config_dict.get('file_extensions', ''),
             file_prefixes=config_dict.get('file_prefixes', '')
         )
+    
+    def to_dict(self) -> Dict[str, str]:
+        """转换为字典，用于保存配置"""
+        return {
+            'src_dir': self.src_dir,
+            'dst_dir': self.dst_dir,
+            'type': self.type,
+            'rest_time': str(self.rest_time),
+            'execution_time': str(self.execution_time),
+            'file_extensions': self.file_extensions,
+            'file_prefixes': self.file_prefixes
+        }
 
-# ===================== 日志工具类 =====================
+# ===================== 日志工具类（修复GUI日志显示） =====================
 class Logger:
-    """优化后的日志工具类，支持单例模式"""
+    """优化后的日志工具类，支持单例模式和GUI日志输出"""
     _instance: Optional['Logger'] = None
     _lock = threading.Lock()
+    # GUI日志信号（用于实时更新界面）
+    log_signal = None
     
     level_relations = {
         'debug': logging.DEBUG,
@@ -98,6 +127,26 @@ class Logger:
         )
         th.setFormatter(format_str)
         self.logger.addHandler(th)
+        
+        # 自定义处理器（用于GUI日志输出 - 核心修复）
+        class GuiLogHandler(logging.Handler):
+            def emit(self, record):
+                try:
+                    msg = self.format(record)
+                    # 直接发送信号，移除多余判断，确保信号能触发
+                    if Logger.log_signal:
+                        Logger.log_signal.emit(msg)
+                except Exception as e:
+                    # 记录处理器自身错误，避免吞异常
+                    print(f"日志处理器错误: {str(e)}")
+        
+        gui_handler = GuiLogHandler()
+        gui_handler.setFormatter(format_str)
+        self.logger.addHandler(gui_handler)
+    
+    def set_log_signal(self, signal):
+        """设置GUI日志信号"""
+        Logger.log_signal = signal
     
     def __getattr__(self, name):
         """动态转发日志方法"""
@@ -114,40 +163,64 @@ class ConfigManager:
         self.logger = logger or Logger()
         self.last_modified_time = 0.0
         self.current_config: Optional[AppConfig] = None
-        self._lock = threading.Lock()
+        self._mutex = QMutex()  # 使用QMutex保证线程安全
+        self._config_loaded = False  # 标记配置是否已加载
     
     def load_config(self) -> AppConfig:
-        """加载并验证配置"""
-        with self._lock:
-            # 检查配置文件是否存在
-            if not os.path.exists(self.config_path):
-                raise FileNotFoundError(f"配置文件 {self.config_path} 不存在，请确认路径")
-            
-            # 读取配置文件
-            config = configparser.ConfigParser()
-            try:
-                with open(self.config_path, 'r', encoding='utf-8') as f:
-                    config.read_file(f)
-            except configparser.Error as e:
-                raise configparser.Error(f"配置文件解析错误: {str(e)}")
-            
-            # 转换为字典格式
-            config_dict = {}
-            for section in config.sections():
-                for option in config[section]:
-                    config_dict[option] = config[section][option]
-            
-            # 验证配置合法性
-            if not self._validate_config(config_dict):
-                raise ValueError("配置参数验证失败，请检查配置文件")
-            
-            # 更新最后修改时间
-            self.last_modified_time = os.path.getmtime(self.config_path)
-            
-            # 创建配置对象并返回
-            self.current_config = AppConfig.from_dict(config_dict)
-            self.logger.info(f"配置文件加载成功: {self.config_path}")
+        """加载并验证配置（线程安全，避免重复加载）"""
+        locker = QMutexLocker(self._mutex)
+        
+        # 避免重复加载
+        if self._config_loaded and self.current_config is not None:
             return self.current_config
+        
+        # 检查配置文件是否存在
+        if not os.path.exists(self.config_path):
+            raise FileNotFoundError(f"配置文件 {self.config_path} 不存在，请确认路径")
+        
+        # 读取配置文件
+        config = configparser.ConfigParser()
+        try:
+            with open(self.config_path, 'r', encoding='utf-8') as f:
+                config.read_file(f)
+        except configparser.Error as e:
+            raise configparser.Error(f"配置文件解析错误: {str(e)}")
+        
+        # 转换为字典格式
+        config_dict = {}
+        for section in config.sections():
+            for option in config[section]:
+                config_dict[option] = config[section][option]
+        
+        # 验证配置合法性
+        if not self._validate_config(config_dict):
+            raise ValueError("配置参数验证失败，请检查配置文件")
+        
+        # 更新最后修改时间
+        self.last_modified_time = os.path.getmtime(self.config_path)
+        
+        # 创建配置对象并返回
+        self.current_config = AppConfig.from_dict(config_dict)
+        self._config_loaded = True
+        self.logger.info(f"配置文件加载成功: {self.config_path}")
+        return self.current_config
+    
+    def save_config(self, config: AppConfig):
+        """保存配置到文件"""
+        locker = QMutexLocker(self._mutex)
+        
+        config_parser = configparser.ConfigParser()
+        config_parser['config'] = config.to_dict()
+        
+        try:
+            with open(self.config_path, 'w', encoding='utf-8') as f:
+                config_parser.write(f)
+            self.logger.info(f"配置已保存到: {self.config_path}")
+            self.last_modified_time = os.path.getmtime(self.config_path)
+            self._config_loaded = False  # 标记需要重新加载
+        except Exception as e:
+            self.logger.error(f"保存配置失败: {str(e)}")
+            raise
     
     def _validate_config(self, config_dict: Dict[str, str]) -> bool:
         """验证配置合法性"""
@@ -171,9 +244,6 @@ class ConfigManager:
             if rest_time <= 0 or exec_time <= 0:
                 self.logger.error("休息时间和执行时间必须大于0")
                 return False
-            # 提示休息时间小于执行时间的情况
-            if rest_time < exec_time:
-                self.logger.warning(f"休息时间({rest_time}秒)小于执行时间({exec_time}秒)，可能影响执行效率")
         except ValueError:
             self.logger.error("休息时间和执行时间必须为有效数字（支持小数）")
             return False
@@ -187,14 +257,16 @@ class ConfigManager:
         return True
     
     def check_for_updates(self) -> Optional[AppConfig]:
-        """检查配置是否有更新"""
+        """检查配置是否有更新（优化：降低检查频率，避免频繁IO）"""
         try:
             if not os.path.exists(self.config_path):
                 return None
             
             current_mtime = os.path.getmtime(self.config_path)
-            if current_mtime > self.last_modified_time:
+            # 只有修改时间差异大于1秒才重新加载（避免频繁读取）
+            if abs(current_mtime - self.last_modified_time) > 1:
                 self.logger.info("检测到配置文件更新，开始重新加载")
+                self._config_loaded = False  # 标记需要重新加载
                 return self.load_config()
         except Exception as e:
             self.logger.error(f"检查配置更新失败: {str(e)}", exc_info=True)
@@ -207,7 +279,7 @@ class FileMover:
     def __init__(self, config: AppConfig, logger: Logger = None):
         self.config = config
         self.logger = logger or Logger()
-        self._lock = threading.Lock()
+        self._mutex = QMutex()
         # 移动统计信息
         self.stats = {
             'total_files': 0,
@@ -218,17 +290,17 @@ class FileMover:
     
     def update_config(self, new_config: AppConfig):
         """更新配置（线程安全）"""
-        with self._lock:
-            self.config = new_config
-            self.logger.info("配置已更新，将使用新配置执行后续操作")
+        locker = QMutexLocker(self._mutex)
+        self.config = new_config
+        self.logger.info("配置已更新，将使用新配置执行后续操作")
     
     def get_source_directory(self) -> str:
         """获取实际的源目录路径"""
-        with self._lock:
-            if self.config.type == "1":
-                current_date = datetime.datetime.now().strftime("%Y%m%d")
-                return os.path.join(self.config.src_dir, current_date)
-            return self.config.src_dir
+        locker = QMutexLocker(self._mutex)
+        if self.config.type == "1":
+            current_date = datetime.datetime.now().strftime("%Y%m%d")
+            return os.path.join(self.config.src_dir, current_date)
+        return self.config.src_dir
     
     def is_directory_empty(self, dir_path: str) -> bool:
         """判断目录是否为空"""
@@ -242,17 +314,18 @@ class FileMover:
     
     def filter_files(self, file_list: List[str]) -> List[str]:
         """根据配置过滤文件"""
-        with self._lock:
-            # 预处理过滤规则（支持带/不带点的扩展名）
-            ext_rules = []
-            if self.config.file_extensions:
-                ext_rules = [e.strip().lower() for e in self.config.file_extensions.split(",") if e.strip()]
-                # 统一添加点前缀
-                ext_rules = [f".{ext}" if not ext.startswith('.') else ext for ext in ext_rules]
-            
-            prefix_rules = []
-            if self.config.file_prefixes:
-                prefix_rules = [p.strip() for p in self.config.file_prefixes.split(",") if p.strip()]
+        locker = QMutexLocker(self._mutex)
+        # 预处理过滤规则（支持带/不带点的扩展名）
+        ext_rules = []
+        if self.config.file_extensions:
+            ext_rules = [e.strip().lower() for e in self.config.file_extensions.split(",") if e.strip()]
+            ext_rules = [f".{ext}" if not ext.startswith('.') else ext for ext in ext_rules]
+        
+        prefix_rules = []
+        if self.config.file_prefixes:
+            prefix_rules = [p.strip() for p in self.config.file_prefixes.split(",") if p.strip()]
+        
+        locker.unlock()  # 提前解锁，避免阻塞
         
         # 无过滤规则时返回原列表
         if not ext_rules and not prefix_rules:
@@ -261,7 +334,6 @@ class FileMover:
         # 执行过滤
         filtered_files = []
         for filename in file_list:
-            # 跳过临时文件
             if filename.endswith(('.tmp', '~', '.swp', '.bak')):
                 continue
             
@@ -283,39 +355,41 @@ class FileMover:
         """移动单个文件，带指数退避重试机制"""
         for attempt in range(retry):
             try:
-                # 确保目标目录存在
                 os.makedirs(os.path.dirname(dst_file), exist_ok=True)
-                
-                # 原子操作移动文件
                 shutil.move(src_file, dst_file)
                 return True
             except PermissionError:
-                wait_time = 0.5 * (attempt + 1)  # 指数退避：0.5s → 1s → 1.5s
+                wait_time = 0.5 * (attempt + 1)
                 self.logger.warning(f"第{attempt+1}次移动失败（权限不足）: {src_file}，等待{wait_time}秒重试")
-                time.sleep(wait_time)
+                # 使用QThread的msleep，避免阻塞
+                QThread.msleep(int(wait_time * 1000))
             except Exception as e:
                 wait_time = 0.5 * (attempt + 1)
                 self.logger.warning(f"第{attempt+1}次移动失败: {src_file}，错误：{str(e)}，等待{wait_time}秒重试")
-                time.sleep(wait_time)
+                QThread.msleep(int(wait_time * 1000))
         
         self.logger.error(f"移动文件失败（已重试{retry}次）: {src_file}")
         return False
     
     def move_files(self) -> None:
-        """批量移动文件核心逻辑"""
+        """批量移动文件核心逻辑（优化：移除time.sleep，改用QThread延迟）"""
         src_dir = self.get_source_directory()
-        dst_dir = self.config.dst_dir
+        dst_dir = self.config.dst_dir  # 修复：正确使用目标目录
+        locker = QMutexLocker(self._mutex)
+        rest_time = self.config.rest_time
+        exec_time = self.config.execution_time
+        locker.unlock()
         
         # 检查源目录是否存在
         if not os.path.isdir(src_dir):
             self.logger.warning(f"源目录不存在: {src_dir}")
-            time.sleep(self.config.execution_time)
+            QThread.msleep(int(exec_time * 1000))
             return
         
         # 检查源目录是否为空
         if self.is_directory_empty(src_dir):
-            self.logger.info(f"源目录为空: {src_dir}，休息 {self.config.rest_time} 秒")
-            time.sleep(self.config.rest_time)
+            self.logger.info(f"源目录为空: {src_dir}，休息 {rest_time} 秒")
+            QThread.msleep(int(rest_time * 1000))
             return
         
         # 获取文件列表（仅文件，排除目录）
@@ -323,14 +397,14 @@ class FileMover:
             file_list = [f for f in os.listdir(src_dir) if os.path.isfile(os.path.join(src_dir, f))]
         except PermissionError:
             self.logger.error(f"无权限访问源目录: {src_dir}")
-            time.sleep(self.config.rest_time)
+            QThread.msleep(int(rest_time * 1000))
             return
         
         # 过滤文件
         filtered_files = self.filter_files(file_list)
         if not filtered_files:
-            self.logger.info(f"源目录 {src_dir} 无符合过滤规则的文件，休息 {self.config.rest_time} 秒")
-            time.sleep(self.config.rest_time)
+            self.logger.info(f"源目录 {src_dir} 无符合过滤规则的文件，休息 {rest_time} 秒")
+            QThread.msleep(int(rest_time * 1000))
             return
         
         # 执行批量移动
@@ -344,10 +418,10 @@ class FileMover:
             src_file = os.path.join(src_dir, filename)
             dst_file = os.path.join(dst_dir, filename)
             
-            # 处理目标文件已存在的情况（毫秒级时间戳避免冲突）
+            # 处理目标文件已存在的情况
             if os.path.exists(dst_file):
                 name, ext = os.path.splitext(filename)
-                timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S_%f")[:-3]  # 毫秒级
+                timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S_%f")[:-3]
                 dst_file = os.path.join(dst_dir, f"{name}_{timestamp}{ext}")
                 self.logger.debug(f"目标文件已存在，重命名为: {dst_file}")
             
@@ -359,226 +433,501 @@ class FileMover:
                 fail_count += 1
         
         # 更新统计信息
-        with self._lock:
-            self.stats['total_files'] += total_files
-            self.stats['success_files'] += success_count
-            self.stats['failed_files'] += fail_count
+        locker = QMutexLocker(self._mutex)
+        self.stats['total_files'] += total_files
+        self.stats['success_files'] += success_count
+        self.stats['failed_files'] += fail_count
         
         # 输出移动结果
         self.logger.info(f"文件移动完成 - 成功: {success_count}, 失败: {fail_count}, 总计: {total_files}")
-        self.logger.info(f"累计统计 - 成功: {self.stats['success_files']}, 失败: {self.stats['failed_files']}, "
-                        f"成功率: {self.stats['success_files']/max(self.stats['total_files'], 1)*100:.1f}%")
+        success_rate = self.stats['success_files']/max(self.stats['total_files'], 1)*100
+        self.logger.info(f"累计统计 - 成功: {self.stats['success_files']}, 失败: {self.stats['failed_files']}, 成功率: {success_rate:.1f}%")
 
-# ===================== 监控器类 =====================
-class FileMonitor:
-    """文件监控器，统一管理监控逻辑"""
+# ===================== 监控器线程类（修复卡死问题） =====================
+class MonitorThread(QThread):
+    """监控器线程，避免阻塞GUI主线程"""
+    status_signal = pyqtSignal(str)  # 状态更新信号
+    stats_signal = pyqtSignal(dict)  # 统计信息更新信号
+    progress_signal = pyqtSignal(int)  # 进度更新信号
     
-    def __init__(self, config_manager: ConfigManager, logger: Logger = None):
+    def __init__(self, config_manager: ConfigManager, logger: Logger):
+        super().__init__()
         self.config_manager = config_manager
-        self.logger = logger or Logger()
-        self.file_mover: Optional[FileMover] = None
-        self.observer = None
+        self.logger = logger
+        self.file_mover = None
         self.is_running = False
-        self.start_time = time.time()
-        self._lock = threading.Lock()  # 修复：添加锁对象定义
-        
-        # 加载初始配置
-        self.config = config_manager.load_config()
-        self.file_mover = FileMover(self.config, self.logger)
+        self.config = None
+        self._mutex = QMutex()
     
-    def start(self):
-        """启动监控"""
-        self.is_running = True
-        self.start_time = time.time()
-        self.logger.info("文件移动工具启动成功")
-        
-        # 尝试使用watchdog监控（高性能），失败则降级为轮询模式
+    def run(self):
+        """线程运行入口（优化：移除死循环阻塞，改用定时器式检查）"""
         try:
-            self._start_watchdog_monitor()
-        except ImportError:
-            self.logger.warning("未安装watchdog库，将使用轮询模式（性能稍低）")
-            self._start_polling_monitor()
-    
-    def _start_watchdog_monitor(self):
-        """启动watchdog监控（事件驱动）"""
-        from watchdog.observers import Observer
-        from watchdog.events import FileSystemEventHandler
-        
-        class MonitorHandler(FileSystemEventHandler):
-            """文件系统事件处理器（避免频繁触发）"""
-            def __init__(self, monitor: 'FileMonitor'):
-                self.monitor = monitor
-                self.last_trigger = 0.0
-                self.timer = None
-                self._lock = threading.Lock()
+            # 加载初始配置（只加载一次）
+            self.config = self.config_manager.load_config()
+            self.file_mover = FileMover(self.config, self.logger)
+            self.is_running = True
             
-            def on_created(self, event):
-                self._handle_event(event)
+            self.status_signal.emit("监控已启动（轮询模式）")
+            self.logger.info("文件移动工具启动成功（GUI修复版）")
             
-            def on_modified(self, event):
-                self._handle_event(event)
-            
-            def _handle_event(self, event):
-                """处理文件事件，实现防抖机制"""
-                # 过滤目录和临时文件
-                if event.is_directory or event.src_path.endswith(('.tmp', '~', '.swp', '.bak')):
-                    return
-                
-                with self._lock:
-                    now = time.time()
-                    interval = self.monitor.config.execution_time
+            # 优化的轮询逻辑：每次循环只执行一次检查，避免死循环阻塞
+            while self.is_running:
+                if not self.is_running:
+                    break
                     
-                    # 取消之前的定时器（防抖）
-                    if self.timer and self.timer.is_alive():
-                        self.timer.cancel()
+                try:
+                    # 执行文件移动（单次）
+                    self.file_mover.move_files()
                     
-                    # 设置新的定时器
-                    if now - self.last_trigger < interval:
-                        # 延迟执行，确保批量文件都能被处理
-                        delay = interval - (now - self.last_trigger)
-                        self.timer = threading.Timer(delay, self.monitor.file_mover.move_files)
-                        self.timer.start()
-                        # 修复：使用monitor的logger而不是self.logger
-                        self.monitor.logger.debug(f"检测到文件变化，将在{delay:.1f}秒后处理")
-                    else:
-                        # 立即执行
-                        self.last_trigger = now
-                        threading.Thread(target=self.monitor.file_mover.move_files, 
-                                       name="FileMoveThread").start()
-        
-        # 确定监控目录
-        with self._lock:
-            if self.config.type == "1":
-                monitor_dir = os.path.dirname(self.config.src_dir) if self.config.src_dir else ""
-            else:
-                monitor_dir = self.config.src_dir
-        
-        # 检查监控目录
-        if not monitor_dir or not os.path.isdir(monitor_dir):
-            self.logger.error(f"监控目录不存在或无效: {monitor_dir}")
-            self.is_running = False
-            return
-        
-        # 启动监控器
-        self.observer = Observer()
-        handler = MonitorHandler(self)
-        self.observer.schedule(handler, monitor_dir, recursive=True)
-        self.observer.daemon = True  # 守护线程，主程序退出时自动关闭
-        self.observer.start()
-        
-        self.logger.info(f"Watchdog监控已启动，监控目录: {monitor_dir}")
-        self.logger.info(f"触发间隔: {self.config.execution_time} 秒（批量文件将统一处理）")
-        
-        # 主线程循环（处理配置更新和状态输出）
-        self._main_loop()
-    
-    def _start_polling_monitor(self):
-        """启动轮询监控（兼容模式）"""
-        self.logger.info(f"轮询监控已启动，执行间隔: {self.config.execution_time} 秒")
-        
-        # 轮询主循环
-        while self.is_running:
-            try:
-                # 执行文件移动
-                self.file_mover.move_files()
-                
-                # 检查配置更新（每分钟一次）
-                new_config = self.config_manager.check_for_updates()
-                if new_config:
-                    self.config = new_config
-                    self.file_mover.update_config(new_config)
-                
-                # 定时输出运行状态（每小时）
-                if time.time() - self.start_time >= 3600:
-                    self._print_status()
-                    self.start_time = time.time()
-                
-                # 等待下一次执行
-                self.logger.debug(f"等待 {self.config.execution_time} 秒后执行下一次检查")
-                time.sleep(self.config.execution_time)
-                
-            except KeyboardInterrupt:
-                self.logger.info("接收到用户终止信号，准备退出")
-                self.is_running = False
-            except Exception as e:
-                self.logger.error(f"轮询过程中发生错误: {str(e)}", exc_info=True)
-                time.sleep(10)  # 出错时短暂等待，避免无限循环报错
-    
-    def _main_loop(self):
-        """主循环，处理配置更新和状态输出"""
-        last_status_time = self.start_time
-        config_check_interval = 60  # 每分钟检查一次配置更新
-        
-        while self.is_running:
-            try:
-                time.sleep(1)
-                
-                # 检查配置更新
-                if time.time() - last_status_time >= config_check_interval:
+                    # 检查配置更新（降低频率）
                     new_config = self.config_manager.check_for_updates()
                     if new_config:
                         self.config = new_config
                         self.file_mover.update_config(new_config)
-                
-                # 定时输出运行状态（每小时）
-                if time.time() - last_status_time >= 3600:
-                    self._print_status()
-                    last_status_time = time.time()
+                        self.status_signal.emit("配置已更新")
                     
-            except KeyboardInterrupt:
-                self.logger.info("接收到用户终止信号，准备退出")
-                self.stop()
-    
-    def _print_status(self):
-        """输出运行状态信息"""
-        uptime = time.time() - self.start_time
-        uptime_str = f"{int(uptime//3600)}h {int((uptime%3600)//60)}m {int(uptime%60)}s"
-        
-        # 确定监控目录
-        with self._lock:
-            if self.config.type == "1":
-                monitor_dir = os.path.dirname(self.config.src_dir) if self.config.src_dir else ""
-            else:
-                monitor_dir = self.config.src_dir
-        
-        # 组装状态信息
-        stats = self.file_mover.stats
-        success_rate = stats['success_files'] / max(stats['total_files'], 1) * 100
-        
-        status_info = f"""
-===== 运行状态 [{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] =====
-启动时间: {datetime.datetime.fromtimestamp(self.start_time).strftime('%Y-%m-%d %H:%M:%S')}
-运行时长: {uptime_str}
-监控目录: {monitor_dir}
-目标目录: {self.config.dst_dir}
-执行间隔: {self.config.execution_time} 秒
-文件过滤: 后缀[{self.config.file_extensions}] 前缀[{self.config.file_prefixes}]
-移动统计: 总计 {stats['total_files']} 个，成功 {stats['success_files']} 个，失败 {stats['failed_files']} 个
-成功率: {success_rate:.1f}%
-===========================================
-        """
-        self.logger.info(status_info)
+                    # 发送统计信息
+                    locker = QMutexLocker(self._mutex)
+                    self.stats_signal.emit(self.file_mover.stats)
+                    locker.unlock()
+                    
+                    # 关键修复：使用QThread的sleep，不阻塞Python GIL
+                    # 每次等待前检查是否需要停止
+                    wait_ms = int(self.config.execution_time * 1000)
+                    wait_step = 100  # 每100ms检查一次是否停止
+                    total_wait = 0
+                    
+                    while total_wait < wait_ms and self.is_running:
+                        QThread.msleep(wait_step)
+                        total_wait += wait_step
+                    
+                except Exception as e:
+                    self.logger.error(f"轮询过程中发生错误: {str(e)}", exc_info=True)
+                    self.status_signal.emit(f"运行错误: {str(e)}")
+                    # 出错时等待10秒，但仍检查是否需要停止
+                    QThread.msleep(10000)
+                    
+        except Exception as e:
+            self.logger.error(f"监控线程启动失败: {str(e)}", exc_info=True)
+            self.status_signal.emit(f"启动失败: {str(e)}")
+            self.is_running = False
     
     def stop(self):
-        """停止监控（优雅退出）"""
+        """停止监控线程（优雅退出，避免卡死）"""
+        locker = QMutexLocker(self._mutex)
         self.is_running = False
-        if self.observer:
-            self.observer.stop()
-            self.observer.join()
-        self.logger.info("文件移动工具已停止运行")
-        self._print_status()  # 退出前输出最终状态
+        locker.unlock()
+        
+        # 等待线程结束（最多5秒）
+        self.wait(5000)
+        
+        self.status_signal.emit("监控已停止")
+        self.logger.info("监控线程已停止（优雅退出）")
+
+# ===================== GUI主窗口类（最终修复版） =====================
+class FileMoveToolGUI(QMainWindow):
+    """文件移动工具主窗口（修复所有已知问题）"""
+    log_signal = pyqtSignal(str)  # 日志更新信号
+    
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle(f"文件自动移动工具 v{TOOL_VERSION}")
+        self.setGeometry(100, 100, 1000, 700)
+        
+        # 初始化组件
+        self.logger = Logger(level='info')
+        self.logger.set_log_signal(self.log_signal)
+        self.config_manager = ConfigManager(DEFAULT_CONFIG_PATH, self.logger)
+        self.monitor_thread = None
+        
+        # 创建界面
+        self._create_ui()
+        
+        # 直接连接日志信号（核心修复：确保信号连接不丢失）
+        self.log_signal.connect(self._update_log)
+        
+        # 定时器更新状态（降低频率，避免资源占用）
+        self.status_timer = QTimer()
+        self.status_timer.timeout.connect(self._update_status)
+        self.status_timer.start(2000)  # 每2秒更新一次
+        
+        # 尝试加载配置（只加载一次）
+        self._load_config_to_ui()
+    
+    def _create_ui(self):
+        """创建用户界面"""
+        # 中心部件
+        central_widget = QWidget()
+        self.setCentralWidget(central_widget)
+        
+        # 主布局
+        main_layout = QVBoxLayout(central_widget)
+        
+        # 标签页
+        self.tab_widget = QTabWidget()
+        main_layout.addWidget(self.tab_widget)
+        
+        # 1. 配置标签页
+        self._create_config_tab()
+        
+        # 2. 监控标签页
+        self._create_monitor_tab()
+        
+        # 3. 日志标签页
+        self._create_log_tab()
+        
+        # 状态栏
+        self.status_bar = QStatusBar()
+        self.setStatusBar(self.status_bar)
+        self.status_bar.showMessage("就绪 - 未启动监控")
+    
+    def _create_config_tab(self):
+        """创建配置标签页"""
+        config_widget = QWidget()
+        self.tab_widget.addTab(config_widget, "配置管理")
+        
+        # 布局
+        layout = QVBoxLayout(config_widget)
+        
+        # 配置组框
+        config_group = QGroupBox("核心配置")
+        layout.addWidget(config_group)
+        
+        # 网格布局
+        grid_layout = QGridLayout(config_group)
+        grid_layout.setSpacing(10)
+        grid_layout.setContentsMargins(20, 20, 20, 20)
+        
+        # 源目录
+        grid_layout.addWidget(QLabel("源目录:"), 0, 0)
+        self.src_dir_edit = QLineEdit()
+        self.src_dir_edit.setPlaceholderText("如：D:\\download")
+        grid_layout.addWidget(self.src_dir_edit, 0, 1)
+        src_dir_btn = QPushButton("浏览")
+        src_dir_btn.clicked.connect(lambda: self._select_directory(self.src_dir_edit))
+        grid_layout.addWidget(src_dir_btn, 0, 2)
+        
+        # 目标目录
+        grid_layout.addWidget(QLabel("目标目录:"), 1, 0)
+        self.dst_dir_edit = QLineEdit()
+        self.dst_dir_edit.setPlaceholderText("如：E:\\archive")
+        grid_layout.addWidget(self.dst_dir_edit, 1, 1)
+        dst_dir_btn = QPushButton("浏览")
+        dst_dir_btn.clicked.connect(lambda: self._select_directory(self.dst_dir_edit))
+        grid_layout.addWidget(dst_dir_btn, 1, 2)
+        
+        # 监控类型
+        grid_layout.addWidget(QLabel("监控类型:"), 2, 0)
+        self.type_combo = QComboBox()
+        self.type_combo.addItems(["按日期子目录监控（YYMMDD）", "直接监控源目录"])
+        self.type_combo.setCurrentIndex(0)
+        grid_layout.addWidget(self.type_combo, 2, 1, 1, 2)
+        
+        # 休息时间
+        grid_layout.addWidget(QLabel("空目录休息时间（秒）:"), 3, 0)
+        self.rest_time_spin = QDoubleSpinBox()
+        self.rest_time_spin.setRange(1, 3600)
+        self.rest_time_spin.setValue(60)
+        self.rest_time_spin.setSingleStep(1)
+        grid_layout.addWidget(self.rest_time_spin, 3, 1, 1, 2)
+        
+        # 执行间隔
+        grid_layout.addWidget(QLabel("执行间隔（秒）:"), 4, 0)
+        self.exec_time_spin = QDoubleSpinBox()
+        self.exec_time_spin.setRange(1, 3600)
+        self.exec_time_spin.setValue(300)
+        self.exec_time_spin.setSingleStep(1)
+        grid_layout.addWidget(self.exec_time_spin, 4, 1, 1, 2)
+        
+        # 文件扩展名过滤
+        grid_layout.addWidget(QLabel("文件扩展名过滤:"), 5, 0)
+        self.ext_edit = QLineEdit()
+        self.ext_edit.setPlaceholderText("逗号分隔，如：mp4,txt（留空不过滤）")
+        grid_layout.addWidget(self.ext_edit, 5, 1, 1, 2)
+        
+        # 文件前缀过滤
+        grid_layout.addWidget(QLabel("文件前缀过滤:"), 6, 0)
+        self.prefix_edit = QLineEdit()
+        self.prefix_edit.setPlaceholderText("逗号分隔，如：order_,log_（留空不过滤）")
+        grid_layout.addWidget(self.prefix_edit, 6, 1, 1, 2)
+        
+        # 按钮布局
+        btn_layout = QHBoxLayout()
+        layout.addLayout(btn_layout)
+        
+        self.save_config_btn = QPushButton("保存配置")
+        self.save_config_btn.clicked.connect(self._save_config)
+        btn_layout.addWidget(self.save_config_btn)
+        
+        self.load_config_btn = QPushButton("加载配置")
+        self.load_config_btn.clicked.connect(self._load_config_to_ui)
+        btn_layout.addWidget(self.load_config_btn)
+        
+        btn_layout.addStretch()
+    
+    def _create_monitor_tab(self):
+        """创建监控标签页"""
+        monitor_widget = QWidget()
+        self.tab_widget.addTab(monitor_widget, "运行监控")
+        
+        # 布局
+        layout = QVBoxLayout(monitor_widget)
+        
+        # 控制按钮组
+        control_group = QGroupBox("监控控制")
+        layout.addWidget(control_group)
+        
+        control_layout = QHBoxLayout(control_group)
+        
+        self.start_btn = QPushButton("启动监控")
+        self.start_btn.clicked.connect(self._start_monitor)
+        control_layout.addWidget(self.start_btn)
+        
+        self.stop_btn = QPushButton("停止监控")
+        self.stop_btn.clicked.connect(self._stop_monitor)
+        self.stop_btn.setEnabled(False)
+        control_layout.addWidget(self.stop_btn)
+        
+        # 状态信息组
+        status_group = QGroupBox("运行状态")
+        layout.addWidget(status_group)
+        
+        status_layout = QGridLayout(status_group)
+        
+        # 基本状态
+        status_layout.addWidget(QLabel("监控状态:"), 0, 0)
+        self.status_label = QLabel("未启动")
+        self.status_label.setStyleSheet("color: red; font-weight: bold;")
+        status_layout.addWidget(self.status_label, 0, 1)
+        
+        status_layout.addWidget(QLabel("当前监控目录:"), 1, 0)
+        self.current_dir_label = QLabel("无")
+        status_layout.addWidget(self.current_dir_label, 1, 1)
+        
+        # 统计信息
+        status_layout.addWidget(QLabel("总计文件数:"), 2, 0)
+        self.total_files_label = QLabel("0")
+        status_layout.addWidget(self.total_files_label, 2, 1)
+        
+        status_layout.addWidget(QLabel("成功移动数:"), 3, 0)
+        self.success_files_label = QLabel("0")
+        self.success_files_label.setStyleSheet("color: green;")
+        status_layout.addWidget(self.success_files_label, 3, 1)
+        
+        status_layout.addWidget(QLabel("失败移动数:"), 4, 0)
+        self.failed_files_label = QLabel("0")
+        self.failed_files_label.setStyleSheet("color: red;")
+        status_layout.addWidget(self.failed_files_label, 4, 1)
+        
+        status_layout.addWidget(QLabel("成功率:"), 5, 0)
+        self.success_rate_label = QLabel("0%")
+        status_layout.addWidget(self.success_rate_label, 5, 1)
+        
+        layout.addStretch()
+    
+    def _create_log_tab(self):
+        """创建日志标签页"""
+        log_widget = QWidget()
+        self.tab_widget.addTab(log_widget, "日志查看")
+        
+        # 布局
+        layout = QVBoxLayout(log_widget)
+        
+        # 日志显示区域
+        self.log_text = QPlainTextEdit()
+        self.log_text.setReadOnly(True)
+        self.log_text.setFont(QFont("Consolas", 9))
+        layout.addWidget(self.log_text)
+        
+        # 日志控制按钮
+        log_btn_layout = QHBoxLayout()
+        layout.addLayout(log_btn_layout)
+        
+        clear_log_btn = QPushButton("清空日志")
+        clear_log_btn.clicked.connect(lambda: self.log_text.clear())
+        log_btn_layout.addWidget(clear_log_btn)
+        
+        save_log_btn = QPushButton("保存日志")
+        save_log_btn.clicked.connect(self._save_log)
+        log_btn_layout.addWidget(save_log_btn)
+        
+        log_btn_layout.addStretch()
+    
+    def _select_directory(self, line_edit):
+        """选择目录并填充到输入框"""
+        dir_path = QFileDialog.getExistingDirectory(self, "选择目录")
+        if dir_path:
+            line_edit.setText(dir_path)
+    
+    def _load_config_to_ui(self):
+        """加载配置到界面（只加载一次，避免重复）"""
+        try:
+            config = self.config_manager.load_config()
+            self.src_dir_edit.setText(config.src_dir)
+            self.dst_dir_edit.setText(config.dst_dir)
+            self.type_combo.setCurrentIndex(0 if config.type == "1" else 1)
+            self.rest_time_spin.setValue(config.rest_time)
+            self.exec_time_spin.setValue(config.execution_time)
+            self.ext_edit.setText(config.file_extensions)
+            self.prefix_edit.setText(config.file_prefixes)
+            
+        except Exception as e:
+            QMessageBox.warning(self, "警告", f"加载配置失败: {str(e)}\n将使用默认值")
+    
+    def _save_config(self):
+        """保存界面配置到文件"""
+        try:
+            # 构建配置对象
+            config = AppConfig(
+                src_dir=self.src_dir_edit.text().strip(),
+                dst_dir=self.dst_dir_edit.text().strip(),
+                type="1" if self.type_combo.currentIndex() == 0 else "2",
+                rest_time=self.rest_time_spin.value(),
+                execution_time=self.exec_time_spin.value(),
+                file_extensions=self.ext_edit.text().strip(),
+                file_prefixes=self.prefix_edit.text().strip()
+            )
+            
+            # 保存配置
+            self.config_manager.save_config(config)
+            
+            # 更新当前监控目录显示
+            self._update_current_dir()
+            
+            QMessageBox.information(self, "成功", "配置保存成功！")
+        except Exception as e:
+            QMessageBox.critical(self, "错误", f"保存配置失败: {str(e)}")
+    
+    def _start_monitor(self):
+        """启动监控（修复：避免重复创建线程）"""
+        if self.monitor_thread and self.monitor_thread.isRunning():
+            QMessageBox.warning(self, "警告", "监控已在运行中！")
+            return
+        
+        try:
+            # 先保存配置
+            self._save_config()
+            
+            # 创建监控线程（每次启动新建）
+            self.monitor_thread = MonitorThread(self.config_manager, self.logger)
+            self.monitor_thread.status_signal.connect(self._update_monitor_status)
+            self.monitor_thread.stats_signal.connect(self._update_stats)
+            
+            # 启动线程
+            self.monitor_thread.start()
+            
+            # 更新界面状态
+            self.start_btn.setEnabled(False)
+            self.stop_btn.setEnabled(True)
+            self.status_label.setText("运行中")
+            self.status_label.setStyleSheet("color: green; font-weight: bold;")
+            self.status_bar.showMessage("监控运行中...")
+            
+            # 更新当前监控目录
+            self._update_current_dir()
+            
+        except Exception as e:
+            QMessageBox.critical(self, "错误", f"启动监控失败: {str(e)}")
+    
+    def _stop_monitor(self):
+        """停止监控（修复：确保线程完全停止）"""
+        if self.monitor_thread and self.monitor_thread.isRunning():
+            self.monitor_thread.stop()
+            # 等待线程结束
+            self.monitor_thread.wait(2000)
+        
+        # 更新界面状态
+        self.start_btn.setEnabled(True)
+        self.stop_btn.setEnabled(False)
+        self.status_label.setText("已停止")
+        self.status_label.setStyleSheet("color: orange; font-weight: bold;")
+        self.status_bar.showMessage("监控已停止")
+    
+    def _update_monitor_status(self, status):
+        """更新监控状态"""
+        self.status_label.setText(status)
+        self.status_bar.showMessage(status)
+    
+    def _update_stats(self, stats):
+        """更新统计信息"""
+        total = stats.get('total_files', 0)
+        success = stats.get('success_files', 0)
+        failed = stats.get('failed_files', 0)
+        
+        self.total_files_label.setText(str(total))
+        self.success_files_label.setText(str(success))
+        self.failed_files_label.setText(str(failed))
+        
+        if total > 0:
+            rate = (success / total) * 100
+            self.success_rate_label.setText(f"{rate:.1f}%")
+        else:
+            self.success_rate_label.setText("0%")
+    
+    def _update_current_dir(self):
+        """更新当前监控目录显示"""
+        try:
+            config = self.config_manager.load_config()
+            if config.type == "1":
+                current_date = datetime.datetime.now().strftime("%Y%m%d")
+                current_dir = os.path.join(config.src_dir, current_date)
+            else:
+                current_dir = config.src_dir
+            self.current_dir_label.setText(current_dir)
+        except:
+            self.current_dir_label.setText("未知")
+    
+    def _update_log(self, log_msg):
+        """更新日志显示（核心修复：简化逻辑，确保日志显示）"""
+        # 直接在主线程更新日志，移除复杂的invokeMethod调用
+        self.log_text.appendPlainText(log_msg)
+        # 自动滚动到最后一行
+        cursor = self.log_text.textCursor()
+        cursor.movePosition(QTextCursor.End)
+        self.log_text.setTextCursor(cursor)
+    
+    def _update_status(self):
+        """定时更新状态（降低频率）"""
+        if self.monitor_thread and self.monitor_thread.isRunning():
+            self._update_current_dir()
+    
+    def _save_log(self):
+        """保存日志到文件"""
+        file_path, _ = QFileDialog.getSaveFileName(
+            self, "保存日志", 
+            f"file_move_tool_log_{QDateTime.currentDateTime().toString('yyyyMMddHHmmss')}.log",
+            "Log Files (*.log);;All Files (*.*)"
+        )
+        if file_path:
+            try:
+                with open(file_path, 'w', encoding='utf-8') as f:
+                    f.write(self.log_text.toPlainText())
+                QMessageBox.information(self, "成功", "日志保存成功！")
+            except Exception as e:
+                QMessageBox.critical(self, "错误", f"保存日志失败: {str(e)}")
+    
+    def closeEvent(self, event):
+        """窗口关闭事件（修复：确保线程完全停止）"""
+        if self.monitor_thread and self.monitor_thread.isRunning():
+            reply = QMessageBox.question(
+                self, "确认", "监控正在运行，是否停止并退出？",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes
+            )
+            if reply == QMessageBox.Yes:
+                self._stop_monitor()
+                # 等待线程结束
+                self.monitor_thread.wait(3000)
+                event.accept()
+            else:
+                event.ignore()
+        else:
+            event.accept()
 
 # ===================== 工具函数 =====================
 def print_version():
-    """打印版本信息"""
+    """打印版本信息（移除功能特性展示）"""
     print("=" * 60)
     print(f"文件自动移动工具 v{TOOL_VERSION}")
-    print("功能特性：")
-    print("  1. 支持按日期子目录或直接监控")
-    print("  2. 支持文件扩展名/前缀过滤")
-    print("  3. 配置文件热加载")
-    print("  4. 批量文件处理防抖机制")
-    print("  5. 完整的移动统计和状态输出")
     print("=" * 60)
 
 def parse_command_line_args():
@@ -591,6 +940,8 @@ def parse_command_line_args():
                        help='日志级别（默认：info）')
     parser.add_argument('-v', '--version', action='store_true',
                        help='显示版本信息并退出')
+    parser.add_argument('--no-gui', action='store_true',
+                       help='强制使用命令行模式运行')
     return parser.parse_args()
 
 # ===================== 主程序 =====================
@@ -611,12 +962,35 @@ def main():
         # 打印版本信息
         print_version()
         
-        # 初始化配置管理器
-        config_manager = ConfigManager(args.config, logger)
-        
-        # 启动监控器
-        monitor = FileMonitor(config_manager, logger)
-        monitor.start()
+        # 判断是否使用GUI模式
+        if QT_AVAILABLE and not args.no_gui:
+            # GUI模式
+            app = QApplication(sys.argv)
+            app.setStyle('Fusion')  # 统一风格
+            
+            # 创建主窗口
+            window = FileMoveToolGUI()
+            window.show()
+            
+            # 运行应用
+            sys.exit(app.exec_())
+        else:
+            # 命令行模式（保留原有逻辑）
+            print("使用命令行模式运行...")
+            # 初始化配置管理器
+            config_manager = ConfigManager(args.config, logger)
+            
+            # 简单的命令行监控逻辑（避免卡死）
+            config = config_manager.load_config()
+            file_mover = FileMover(config, logger)
+            
+            print("监控已启动，按Ctrl+C停止...")
+            try:
+                while True:
+                    file_mover.move_files()
+                    time.sleep(config.execution_time)
+            except KeyboardInterrupt:
+                print("\n监控已停止")
         
     except FileNotFoundError as e:
         logger.critical(f"启动失败: {str(e)}")

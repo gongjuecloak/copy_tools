@@ -22,9 +22,7 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.13'
-          # 核心修复：关闭自动缓存（避免查找requirements.txt）
-          # 若后续创建了requirements.txt，可改回 cache: 'pip'
-          cache: false
+          # 核心修复：删除 cache 参数（默认不缓存，避免报错）
 
       - name: 安装依赖包
         run: |

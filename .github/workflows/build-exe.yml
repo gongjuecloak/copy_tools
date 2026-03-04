@@ -1,0 +1,75 @@
+name: Build and Release EXE
+
+# 触发条件：1. 手动触发 2. 创建Tag时自动触发 3. 推送到main分支时触发（可选）
+on:
+  workflow_dispatch:  # 手动触发
+  push:
+    tags:
+      - 'v*'  # 以v开头的Tag（如v2.2.0）触发
+    branches:
+      - main  # 推送到main分支时触发（可选，可注释掉）
+
+# 工作流权限配置
+permissions:
+  contents: write  # 允许写入Release内容
+
+jobs:
+  build-windows-exe:
+    runs-on: windows-latest  # 使用Windows环境打包EXE
+    
+    steps:
+      # 步骤1：拉取代码到工作环境
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      # 步骤2：配置Python环境
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'  # 匹配你的Python版本（和本地一致）
+          cache: 'pip'  # 缓存pip依赖，加速构建
+      
+      # 步骤3：安装依赖（包括打包工具和程序依赖）
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # 安装程序依赖（watchdog）和打包工具（pyinstaller）
+          pip install pyinstaller watchdog
+          # 生成依赖清单（可选，方便查看）
+          pip freeze > requirements.txt
+      
+      # 步骤4：使用PyInstaller打包EXE
+      - name: Build EXE with PyInstaller
+        run: |
+          # 打包命令说明：
+          # -F：单文件EXE（方便分发）
+          # -n：指定EXE文件名
+          # --clean：清理缓存
+          # --log-level=INFO：显示打包日志
+          pyinstaller --onefile --name "FileMoveTool" --clean --log-level=INFO copy_tools.py
+      
+      # 步骤5：查看打包结果（调试用，可选）
+      - name: List build files
+        run: |
+          dir dist\
+      
+      # 步骤6：创建/更新Release并上传EXE文件
+      - name: Upload to GitHub Releases
+        uses: softprops/action-gh-release@v2
+        with:
+          # 上传dist目录下的所有文件（主要是EXE）
+          files: |
+            dist/FileMoveTool.exe
+            copy.ini  # 配置文件模板（可选，一起发布）
+            requirements.txt  # 依赖清单（可选）
+          # 自动生成Release名称和描述
+          name: ${{ github.ref_name }}
+          body: |
+            ## 文件移动工具 ${{ github.ref_name }}
+            自动打包的Windows EXE版本
+            - 基于Python 3.13 + PyInstaller构建
+            - 包含配置文件模板（copy.ini）
+          draft: false  # 是否为草稿（false=直接发布）
+          prerelease: false  # 是否为预发布版本
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}  # GitHub自动生成的令牌，无需手动配置

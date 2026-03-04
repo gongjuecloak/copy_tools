@@ -22,7 +22,6 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.13'
-          # 核心修复：删除 cache 参数（默认不缓存，避免报错）
 
       - name: 安装依赖包
         run: |
@@ -31,24 +30,29 @@ jobs:
           # 打印已安装包，排查依赖问题
           pip list
 
-      # 关键：打包前先打印目录，打包后验证文件（增加调试信息）
+      # 关键：修复打包命令（移除无效的--encoding参数）
       - name: 打包EXE文件并验证
         run: |
           # 打印当前目录结构（调试用）
           Write-Host "=== 当前目录文件列表 ==="
           Get-ChildItem -Recurse
           
-          # 打包EXE（指定编码，避免中文名称乱码）
-          pyinstaller --onefile --name "自动文件移动工具" --clean --encoding utf-8 copy_tools.py
+          # 核心修复：移除--encoding参数，PyInstaller不支持该参数
+          # 中文名称兼容：通过设置环境变量确保中文文件名正常
+          $env:PYTHONIOENCODING = 'utf-8'
+          pyinstaller --onefile --name "自动文件移动工具" --clean copy_tools.py
           
           # 打印dist目录（确认EXE是否生成）
           Write-Host "=== dist目录文件列表 ==="
-          Get-ChildItem -Path "dist" -Recurse
+          Get-ChildItem -Path "dist" -Recurse -ErrorAction SilentlyContinue
           
           # 验证EXE存在（兼容大小写/路径分隔符）
           $exePath = Join-Path -Path "dist" -ChildPath "自动文件移动工具.exe"
           if (-not (Test-Path $exePath -PathType Leaf)) {
             Write-Error "❌ EXE打包失败！未找到文件：$exePath"
+            # 打印详细错误日志（便于排查）
+            Write-Host "=== 打包日志 ==="
+            Get-Content -Path "auto-py-to-exe.log" -ErrorAction SilentlyContinue
             exit 1
           }
           Write-Host "✅ EXE文件生成成功：$exePath"
@@ -56,17 +60,14 @@ jobs:
           $fileInfo = Get-Item $exePath
           Write-Host "📄 EXE文件大小：$($fileInfo.Length) 字节"
 
-      # 核心修复：上传EXE（兼容手动触发/Tag触发，指定明确路径）
+      # 上传EXE到GitHub Releases
       - name: 上传EXE文件到GitHub Releases
         uses: softprops/action-gh-release@v2
         if: github.event_name != 'pull_request'  # 避免PR触发
         with:
-          # 明确指定文件路径（使用绝对路径+兼容Windows）
           files: |
             ${{ github.workspace }}\dist\自动文件移动工具.exe
-          # 兼容手动触发时的Release名称
           name: ${{ github.ref_name || 'v1.0.0' }}
-          # 强制创建Release（即使已存在同名Tag）
           draft: false
           prerelease: false
           body: |
@@ -80,10 +81,9 @@ jobs:
             - 首次运行请先配置源目录/目标目录
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # 强制UTF-8编码，避免中文乱码
           PYTHONIOENCODING: utf-8
 
-  # 可选：增加Artifact上传（备用方案，确保文件可获取）
+  # 可选：增加Artifact上传（备用方案）
   upload-artifact:
     needs: build-windows-exe
     runs-on: windows-latest
